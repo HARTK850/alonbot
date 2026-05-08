@@ -1,5 +1,5 @@
 // שים פה את הכתובת של השרת שלך מ-Vercel:
-const VERSEL_BACKEND_URL = 'https://YOUR-APP-NAME.vercel.app/api/search';
+const VERSEL_BACKEND_URL = 'https://alonbotapi.vercel.app/api/search';
 
 document.addEventListener('DOMContentLoaded', () => {
     initParticleNetwork();
