@@ -1,5 +1,5 @@
 // שים פה את הכתובת של השרת שלך מ-Vercel:
-const VERSEL_BACKEND_URL = 'https://alonbotapi.vercel.app/api/search';
+const VERCEL_BACKEND_URL = 'https://alonbotapi.vercel.app/api/search';
 
 document.addEventListener('DOMContentLoaded', () => {
     initParticleNetwork();
@@ -107,7 +107,7 @@ document.addEventListener('DOMContentLoaded', () => {
             setTimeout(() => { progressBar.style.width = '60%'; botMessage.innerText = "מפענח עם Gemini ומחפש PDF..."; }, 2000);
 
             // === קריאה לשרת ב-Vercel מהאתר בגיטהאב ===
-            const response = await fetch(`${VERSEL_BACKEND_URL}?q=${encodeURIComponent(query)}`, {
+            const response = await fetch(`${VERCEL_BACKEND_URL}?q=${encodeURIComponent(query)}`, {
                 method: 'GET',
                 headers: { 'x-gemini-api-key': currentUserApiKey }
             });
