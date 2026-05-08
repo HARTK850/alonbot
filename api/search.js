@@ -1,116 +1,136 @@
+const google = require('google-this');
+const cheerio = require('cheerio');
+
+// פונקציית העזר לביצוע פניות HTTP מתקדמות לדפדפן כדי לא להיחסם
+async function secureFetch(url) {
+    const headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7',
+    };
+    return await fetch(url, { headers, redirect: 'follow' });
+}
+
 export default async function handler(req, res) {
-    // טיפול בבקשות preflight של CORS
-    if (req.method === 'OPTIONS') {
-        return res.status(200).end();
-    }
+    if (req.method === 'OPTIONS') return res.status(200).end();
 
     const userQuery = req.query.q;
-
-    if (!userQuery) {
-        return res.status(400).json({ error: 'חסר פרמטר חיפוש' });
-    }
+    if (!userQuery) return res.status(400).json({ error: 'לא הוזן שם של עלון לחיפוש.' });
 
     try {
-        console.log(`[1] מתחיל עיבוד עבור: "${userQuery}"`);
+        console.log(`[ALON-BOT] מתחיל טיפול בבקשה: "${userQuery}"`);
 
         // ==========================================
-        // שלב 1: שימוש ב-Gemini להבנת הבקשה ויצירת שאילתת חיפוש מדויקת
-        // דרישה חובה: שימוש במודל gemini-3.1-flash-lite-preview
+        // 1. שימוש במודל Gemini בדיוק לפי הדרישה: gemini-3.1-flash-lite-preview
         // ==========================================
         const geminiApiKey = process.env.GEMINI_API_KEY;
-        if (!geminiApiKey) throw new Error("חסר מפתח API של Gemini בשרת");
-
-        const prompt = `
-            המשתמש מחפש עלון שבת (Jewish Sabbath Newsletter) ורוצה להוריד קובץ PDF שלו.
-            הבקשה של המשתמש: "${userQuery}"
-            
-            תפקידך:
-            1. זהה שגיאות כתיב אם ישנן ותקן אותן (למשל: "שיחת השבו" -> "שיחת השבוע").
-            2. אם המשתמש ביקש בקשה כללית (למשל "עלון לילדים"), בחר את העלון המוכר ביותר שעונה להגדרה (למשל "זרע שמשון לילדים" או "אותיות").
-            3. החזר *אך ורק* מחרוזת טקסט אחת שהיא שאילתת החיפוש הטובה ביותר לגוגל שתמצא את העלון של השבת האחרונה בפורמט PDF.
-            הוסף לשאילתה את המילה "עלון" ואת "filetype:pdf".
-            
-            אל תחזיר שום טקסט אחר, רק את שורת החיפוש.
-        `;
+        if (!geminiApiKey) throw new Error("מפתח Gemini API חסר בשרת Vercel.");
 
         const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=${geminiApiKey}`;
         
-        const geminiResponse = await fetch(geminiUrl, {
+        const prompt = `
+            המשתמש מחפש עלון שבת: "${userQuery}".
+            תפקידך להבין לאיזה עלון בדיוק הוא התכוון, לתקן שגיאות כתיב, ולהחזיר אך ורק את המחרוזת המדויקת הבאה:
+            שם העלון המדויק + "pdf" + "עלון שבת".
+            לדוגמה, אם הקליד "שיחת השבו", תחזיר: "שיחת השבוע pdf עלון שבת".
+            אל תחזיר אף מילה נוספת מעבר לשורת החיפוש!
+        `;
+
+        const geminiRes = await fetch(geminiUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }]
-            })
+            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
         });
 
-        const geminiData = await geminiResponse.json();
-        if (!geminiData.candidates || !geminiData.candidates[0].content) {
-            throw new Error("שגיאה בפענוח הבקשה מול Gemini");
-        }
-
-        const exactSearchQuery = geminiData.candidates[0].content.parts[0].text.trim();
-        console.log(`[2] שאילתת חיפוש שנוצרה ע"י מודל 3.1-flash-lite-preview: "${exactSearchQuery}"`);
+        const geminiData = await geminiRes.json();
+        if (!geminiData.candidates) throw new Error("Gemini לא הצליח לפענח את הבקשה.");
+        
+        const optimizedQuery = geminiData.candidates[0].content.parts[0].text.trim().replace(/"/g, '');
+        console.log(`[ALON-BOT] שאילתה חכמה לאחר עיבוד: "${optimizedQuery}"`);
 
         // ==========================================
-        // שלב 2: חיפוש בגוגל מציאת ה-PDF (Google Custom Search API)
+        // 2. חיפוש ברשת באמצעות חבילות NPM בלבד (ללא מפתחות של גוגל!)
+        // מנגנון כפול להבטחת אמינות: קודם Google-This ואז DuckDuckGo Scraper
         // ==========================================
-        const googleApiKey = process.env.GOOGLE_SEARCH_API_KEY;
-        const googleCx = process.env.GOOGLE_CX_ID;
-        
-        if (!googleApiKey || !googleCx) throw new Error("חסרים מפתחות חיפוש של גוגל בשרת");
+        let finalPdfUrl = null;
 
-        const searchApiUrl = `https://www.googleapis.com/customsearch/v1?key=${googleApiKey}&cx=${googleCx}&q=${encodeURIComponent(exactSearchQuery)}&num=3`;
-        
-        const searchRes = await fetch(searchApiUrl);
-        const searchData = await searchRes.json();
-
-        if (!searchData.items || searchData.items.length === 0) {
-            throw new Error("לא נמצא קובץ PDF מתאים לעלון המבוקש.");
+        try {
+            // מנגנון א': חיפוש דרך חבילת google-this
+            const options = { page: 0, safe: false, parse_ads: false, additional_params: { hl: 'iw' } };
+            const searchResponse = await google.search(`${optimizedQuery} ext:pdf`, options);
+            
+            for (const result of searchResponse.results) {
+                if (result.url.toLowerCase().endsWith('.pdf') || result.title.includes('PDF')) {
+                    finalPdfUrl = result.url;
+                    break;
+                }
+            }
+        } catch (e) {
+            console.log(`[ALON-BOT] ספריית גוגל נחסמה, עובר לסריקת גיבוי (DuckDuckGo)...`);
         }
 
-        // חילוץ הקישור הראשון שהוא אכן PDF
-        let pdfUrl = null;
-        for (const item of searchData.items) {
-            if (item.link.toLowerCase().endsWith('.pdf') || (item.mime && item.mime === 'application/pdf')) {
-                pdfUrl = item.link;
-                break;
+        // מנגנון ב': גיבוי Scraper עצמאי לחלוטין מול DuckDuckGo
+        if (!finalPdfUrl) {
+            const duckUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(optimizedQuery + ' filetype:pdf')}`;
+            const duckRes = await secureFetch(duckUrl);
+            
+            if (duckRes.ok) {
+                const html = await duckRes.text();
+                const $ = cheerio.load(html);
+                
+                $('.result__url').each((i, elem) => {
+                    const link = $(elem).attr('href');
+                    if (link && link.includes('.pdf')) {
+                        finalPdfUrl = link.startsWith('//') ? 'https:' + link : link;
+                        return false; // עוצר את הלולאה
+                    }
+                });
             }
         }
 
-        if (!pdfUrl) {
-            // Fallback לתוצאה הראשונה גם אם גוגל לא זיהה בוודאות שזה PDF לפי הסיומת
-            pdfUrl = searchData.items[0].link; 
+        if (!finalPdfUrl) {
+            throw new Error(`סליחה, הבוט סרק את הרשת אך לא מצא קובץ PDF עדכני עבור "${userQuery}".`);
         }
 
-        console.log(`[3] נמצא קובץ: ${pdfUrl}`);
+        console.log(`[ALON-BOT] בינגו! נמצא קישור לקובץ: ${finalPdfUrl}`);
 
         // ==========================================
-        // שלב 3: הורדת ה-PDF לשרת (Vercel) והחזרתו ל-Frontend
-        // חובה: אסור להחזיר קישור! מחזירים את הקובץ עצמו כ-Stream/Buffer
+        // 3. הורדת ה-PDF בפועל אל השרת והחזרתו כקובץ ללקוח
+        // (אסור לתת למשתמש קישור לאתר חיצוני!)
         // ==========================================
         
-        const pdfResponse = await fetch(pdfUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } // מניעת חסימות בוטים
-        });
+        let pdfBuffer;
+        try {
+            const pdfDownloadRes = await secureFetch(finalPdfUrl);
+            if (!pdfDownloadRes.ok) throw new Error("השרת המאחסן את העלון דחה את ההורדה.");
+            
+            // בדיקת תקינות התוכן (לוודא שזה באמת PDF ולא דף חסימה)
+            const contentType = pdfDownloadRes.headers.get('content-type');
+            if (contentType && !contentType.includes('pdf') && !contentType.includes('application/octet-stream')) {
+                throw new Error("הקובץ שנמצא אינו בפורמט PDF תקין.");
+            }
 
-        if (!pdfResponse.ok) {
-            throw new Error("נמצא קובץ אך השרת המאחסן סירב להורדה.");
+            const arrayBuffer = await pdfDownloadRes.arrayBuffer();
+            pdfBuffer = Buffer.from(arrayBuffer);
+            
+            if (pdfBuffer.length < 1000) throw new Error("קובץ ה-PDF שהורד ריק או פגום.");
+
+        } catch (downloadErr) {
+            console.error(downloadErr);
+            throw new Error("הבוט מצא את העלון, אך השרת החיצוני סירב להעביר את הקובץ.");
         }
 
-        const pdfBuffer = await pdfResponse.arrayBuffer();
+        console.log(`[ALON-BOT] ה-PDF נטען בהצלחה לשרת. גודל: ${(pdfBuffer.length / 1024 / 1024).toFixed(2)} MB. שולח למשתמש...`);
 
-        console.log(`[4] הקובץ הורד בהצלחה לשרת, שולח לקליינט. גודל: ${pdfBuffer.byteLength} bytes`);
-
-        // הגדרת Headers להחזרת קובץ בינארי
+        // החזרת הקובץ ישירות כהורדה מאובטחת מהשרת שלנו
         res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename="shabbat_newsletter.pdf"`);
-        res.setHeader('Cache-Control', 's-maxage=86400'); // קאש בשרת Vercel ל-24 שעות
+        res.setHeader('Content-Disposition', `attachment; filename="AlonBot_Shabbat.pdf"`);
+        res.setHeader('Cache-Control', 's-maxage=3600'); 
 
-        // שליחת הקובץ עצמו למשתמש!
-        return res.status(200).send(Buffer.from(pdfBuffer));
+        return res.status(200).send(pdfBuffer);
 
     } catch (error) {
-        console.error("Error:", error);
-        return res.status(500).json({ error: error.message || "אירעה שגיאה פנימית בשרת" });
+        console.error("[ALON-BOT] שגיאה:", error.message);
+        return res.status(500).json({ error: error.message || "אירעה תקלה פנימית במנועי הבוט." });
     }
 }
