@@ -3,41 +3,65 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>מנוע חיפוש - עלוני שבת PDF</title>
+    <title>עלון בוט - החיפוש החכם לעלוני שבת</title>
     <link rel="stylesheet" href="style.css">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1><i class="fas fa-book-open"></i> חיפוש עלוני שבת</h1>
-            <p>חפש כל עלון (למשל: "שיחת השבוע", "עלון לילדים", "פנינה לשבת") והורד ישירות כ-PDF</p>
+    <!-- רקע חלקיקים אינטראקטיבי -->
+    <canvas id="particleCanvas"></canvas>
+
+    <div class="glass-container">
+        <header class="bot-header">
+            <div class="bot-avatar">
+                <i class="fas fa-robot"></i>
+                <div class="pulse-ring"></div>
+            </div>
+            <h1>עלון בוט</h1>
+            <p class="subtitle">העוזר האישי שלך למציאת עלוני שבת בפורמט PDF</p>
         </header>
 
-        <main>
-            <div class="search-box">
-                <input type="text" id="searchInput" placeholder="הקלד שם של עלון או נושא..." autocomplete="off">
-                <button id="searchBtn"><i class="fas fa-search"></i> חפש והורד</button>
+        <main class="main-content">
+            <div class="search-wrapper">
+                <div class="input-group">
+                    <i class="fas fa-search search-icon"></i>
+                    <input type="text" id="botInput" placeholder="איזה עלון תרצה לשבת? (למשל: שיחת השבוע, קרוב אליך...)" autocomplete="off">
+                    <button id="actionBtn" class="primary-btn">
+                        <span>חפש והורד</span>
+                        <i class="fas fa-download"></i>
+                    </button>
+                </div>
+                <div class="popular-tags">
+                    <span class="tag">זרע שמשון</span>
+                    <span class="tag">מצב הרוח</span>
+                    <span class="tag">שבת בשבתו</span>
+                    <span class="tag">הידברות</span>
+                </div>
             </div>
 
-            <div id="statusArea" class="status-area hidden">
-                <div class="loader" id="loader"></div>
-                <p id="statusText">מעבד את הבקשה...</p>
-            </div>
-
-            <div id="errorArea" class="error-area hidden">
-                <i class="fas fa-exclamation-circle"></i>
-                <p id="errorText"></p>
-            </div>
-
-            <div id="successArea" class="success-area hidden">
-                <i class="fas fa-check-circle"></i>
-                <p>הקובץ נמצא והורד בהצלחה!</p>
+            <!-- אזור התראות וסטטוס הבוט -->
+            <div id="botStatusArea" class="status-box hidden">
+                <div class="status-content">
+                    <div id="loadingSpinner" class="spinner hidden">
+                        <div class="bounce1"></div>
+                        <div class="bounce2"></div>
+                        <div class="bounce3"></div>
+                    </div>
+                    <div id="botIcon" class="status-icon"><i class="fas fa-info-circle"></i></div>
+                    <p id="botMessage">מוכן לפעולה...</p>
+                </div>
+                <!-- מנגנון הצגת התקדמות מדורגת -->
+                <div id="progressTrack" class="progress-track hidden">
+                    <div id="progressBar" class="progress-bar"></div>
+                </div>
             </div>
         </main>
 
         <footer>
-            <p>נבנה באמצעות GitHub Pages, Vercel ו-Gemini 3.1 Flash Lite Preview</p>
+            <div class="footer-content">
+                <p><i class="fas fa-bolt"></i> פותח ע"י <strong>מייבין במקצת</strong></p>
+                <p class="small-text">המערכת מורידה קבצים ישירות ללא מעבר לאתרים חיצוניים.</p>
+            </div>
         </footer>
     </div>
     <script src="app.js"></script>
