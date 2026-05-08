@@ -1,0 +1,13 @@
+{
+  "name": "alonim-backend",
+  "version": "1.0.0",
+  "description": "Backend for Shabbat PDF Downloader",
+  "main": "api/search.js",
+  "scripts": {
+    "start": "node api/search.js"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "vercel": "^32.0.0"
+  }
+}
