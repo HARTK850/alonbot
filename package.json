@@ -1,15 +1,11 @@
 {
-  "name": "alon-bot",
-  "version": "2.0.0",
-  "description": "Alon Bot - Shabbat PDF Downloader",
-  "main": "api/search.js",
+  "name": "alon-bot-backend",
+  "version": "1.0.0",
   "scripts": {
-    "start": "node api/search.js"
+    "build": "echo 'No build step'"
   },
   "dependencies": {
-    "cheerio": "^1.0.0",
+    "cheerio": "^1.0.0-rc.12",
     "google-this": "^1.8.0"
-  },
-  "author": "Alon Bot Creator",
-  "license": "MIT"
+  }
 }
