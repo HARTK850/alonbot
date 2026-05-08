@@ -1,13 +1,18 @@
 {
-  "name": "alonim-backend",
+  "name": "alon-bot-system",
   "version": "1.0.0",
-  "description": "Backend for Shabbat PDF Downloader",
+  "description": "Alon Bot - Smart PDF Downloader using Gemini and Scraping",
   "main": "api/search.js",
   "scripts": {
     "start": "node api/search.js"
   },
-  "dependencies": {},
-  "devDependencies": {
-    "vercel": "^32.0.0"
-  }
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.12",
+    "google-this": "^1.8.0"
+  },
+  "engines": {
+    "node": ">=18.x"
+  },
+  "author": "Alon Bot Creator",
+  "license": "MIT"
 }
