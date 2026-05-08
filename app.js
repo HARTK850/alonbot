@@ -1,7 +1,9 @@
+// שים פה את הכתובת של השרת שלך מ-Vercel:
+const VERSEL_BACKEND_URL = 'https://YOUR-APP-NAME.vercel.app/api/search';
+
 document.addEventListener('DOMContentLoaded', () => {
     initParticleNetwork();
 
-    // רכיבי DOM
     const botInput = document.getElementById('botInput');
     const actionBtn = document.getElementById('actionBtn');
     const statusArea = document.getElementById('botStatusArea');
@@ -10,7 +12,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const loadingSpinner = document.getElementById('loadingSpinner');
     const progressBar = document.getElementById('progressBar');
     
-    // רכיבי מפתח API (Settings Modal)
     const settingsModal = document.getElementById('settingsModal');
     const openSettingsBtn = document.getElementById('openSettingsBtn');
     const closeModalBtn = document.getElementById('closeModalBtn');
@@ -18,11 +19,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const apiKeyInput = document.getElementById('apiKeyInput');
     const togglePasswordBtn = document.getElementById('togglePasswordBtn');
 
-    // רכיבי היסטוריה
     const historyList = document.getElementById('historyList');
     const clearHistoryBtn = document.getElementById('clearHistoryBtn');
 
-    // מערכת התראות (Toasts)
     function showToast(message, type = 'info') {
         const container = document.getElementById('toastContainer');
         const toast = document.createElement('div');
@@ -33,84 +32,62 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 400); }, 4000);
     }
 
-    // --- ניהול מפתח API ---
     let currentUserApiKey = localStorage.getItem('geminiApiKey') || '';
 
     function checkApiKey() {
         if (!currentUserApiKey) {
             settingsModal.classList.remove('hidden');
-            showToast("נא להזין מפתח API כדי להתחיל", 'error');
+            showToast("נא להזין מפתח API", 'error');
             return false;
         }
         return true;
     }
 
-    openSettingsBtn.addEventListener('click', () => {
-        apiKeyInput.value = currentUserApiKey;
-        settingsModal.classList.remove('hidden');
-    });
-
+    openSettingsBtn.addEventListener('click', () => { apiKeyInput.value = currentUserApiKey; settingsModal.classList.remove('hidden'); });
     closeModalBtn.addEventListener('click', () => settingsModal.classList.add('hidden'));
 
     togglePasswordBtn.addEventListener('click', () => {
-        const type = apiKeyInput.type === 'password' ? 'text' : 'password';
-        apiKeyInput.type = type;
-        togglePasswordBtn.innerHTML = type === 'password' ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>';
+        apiKeyInput.type = apiKeyInput.type === 'password' ? 'text' : 'password';
+        togglePasswordBtn.innerHTML = apiKeyInput.type === 'password' ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>';
     });
 
     saveApiKeyBtn.addEventListener('click', () => {
         const key = apiKeyInput.value.trim();
-        if (key.length < 20) {
-            showToast("המפתח שהוזן נראה קצר מדי או לא תקין", 'error');
-            return;
-        }
+        if (key.length < 20) return showToast("המפתח לא תקין", 'error');
         currentUserApiKey = key;
         localStorage.setItem('geminiApiKey', key);
         settingsModal.classList.add('hidden');
-        showToast("מפתח API נשמר בהצלחה בדפדפן!");
+        showToast("מפתח נשמר!");
     });
 
-    // --- ניהול היסטוריית הורדות ---
     function loadHistory() {
         const history = JSON.parse(localStorage.getItem('alonBotHistory') || '[]');
         historyList.innerHTML = '';
         if (history.length === 0) {
-            historyList.innerHTML = '<div class="empty-history">טרם הורדת עלונים.</div>';
-            clearHistoryBtn.classList.add('hidden');
-            return;
+            historyList.innerHTML = '<div class="empty-history">אין היסטוריה.</div>';
+            clearHistoryBtn.classList.add('hidden'); return;
         }
-        
         clearHistoryBtn.classList.remove('hidden');
         history.forEach(item => {
-            const div = document.createElement('div');
-            div.className = 'history-item';
-            div.innerHTML = `<span>${item.name}</span> <i class="fas fa-file-pdf" title="הורד שוב"></i>`;
-            div.addEventListener('click', () => {
-                botInput.value = item.name;
-                startBotProcess();
-            });
+            const div = document.createElement('div'); div.className = 'history-item';
+            div.innerHTML = `<span>${item.name}</span> <i class="fas fa-file-pdf"></i>`;
+            div.addEventListener('click', () => { botInput.value = item.name; startBotProcess(); });
             historyList.appendChild(div);
         });
     }
 
     function saveToHistory(name) {
         let history = JSON.parse(localStorage.getItem('alonBotHistory') || '[]');
-        history = history.filter(item => item.name !== name); // מניעת כפילויות
+        history = history.filter(item => item.name !== name);
         history.unshift({ name, date: new Date().toISOString() });
-        if (history.length > 8) history.pop(); // שמירת 8 אחרונים
+        if (history.length > 8) history.pop();
         localStorage.setItem('alonBotHistory', JSON.stringify(history));
         loadHistory();
     }
 
-    clearHistoryBtn.addEventListener('click', () => {
-        localStorage.removeItem('alonBotHistory');
-        loadHistory();
-        showToast("היסטוריה נוקתה");
-    });
+    clearHistoryBtn.addEventListener('click', () => { localStorage.removeItem('alonBotHistory'); loadHistory(); });
+    loadHistory();
 
-    loadHistory(); // טעינה ראשונית
-
-    // --- מערכת חיפוש והורדה ---
     document.querySelectorAll('.tag').forEach(tag => {
         tag.addEventListener('click', () => { botInput.value = tag.innerText; startBotProcess(); });
     });
@@ -120,90 +97,68 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function startBotProcess() {
         if (!checkApiKey()) return;
-
         const query = botInput.value.trim();
         if (!query) return;
 
-        setUIState('loading', "מתחבר ל-Gemini לפענוח הבקשה...");
+        setUIState('loading', "מתחבר לשרת...");
         progressBar.style.width = '20%';
 
         try {
-            setTimeout(() => { progressBar.style.width = '50%'; botMessage.innerText = "סורק את האינטרנט לאיתור ה-PDF..."; }, 2000);
+            setTimeout(() => { progressBar.style.width = '60%'; botMessage.innerText = "מפענח עם Gemini ומחפש PDF..."; }, 2000);
 
-            // שליחת הבקשה לשרת, כולל המפתח דרך ה-Headers!
-            const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`, {
+            // === קריאה לשרת ב-Vercel מהאתר בגיטהאב ===
+            const response = await fetch(`${VERSEL_BACKEND_URL}?q=${encodeURIComponent(query)}`, {
                 method: 'GET',
-                headers: {
-                    'x-gemini-api-key': currentUserApiKey // מפתח המשתמש נשלח לשרת
-                }
+                headers: { 'x-gemini-api-key': currentUserApiKey }
             });
             
             if (!response.ok) {
                 const errData = await response.json();
-                if (response.status === 401) {
-                    localStorage.removeItem('geminiApiKey');
-                    currentUserApiKey = '';
-                }
-                throw new Error(errData.error || "הבוט לא הצליח לאתר את העלון.");
+                if (response.status === 401) { localStorage.removeItem('geminiApiKey'); currentUserApiKey = ''; }
+                throw new Error(errData.error || "שגיאה בחיפוש.");
             }
 
             progressBar.style.width = '85%';
-            botMessage.innerText = "הקובץ אותר! מעביר אותו למכשיר שלך...";
+            botMessage.innerText = "הקובץ יורד עכשיו...";
 
             const blob = await response.blob();
             downloadBlob(blob, query);
             saveToHistory(query);
 
-            setUIState('success', "הקובץ ירד בהצלחה! שבת שלום.");
+            setUIState('success', "הורדה הושלמה!");
             progressBar.style.width = '100%';
-            showToast("הורדה הושלמה!");
 
         } catch (error) {
             setUIState('error', error.message);
             progressBar.style.width = '0%';
-            showToast(error.message, 'error');
         }
     }
 
     function setUIState(state, message) {
         statusArea.classList.remove('hidden', 'error', 'success');
         botMessage.innerText = message;
-        
         if (state === 'loading') {
-            botIcon.classList.add('hidden');
-            loadingSpinner.classList.remove('hidden');
-            document.getElementById('progressTrack').classList.remove('hidden');
-            actionBtn.disabled = true;
+            botIcon.classList.add('hidden'); loadingSpinner.classList.remove('hidden');
+            document.getElementById('progressTrack').classList.remove('hidden'); actionBtn.disabled = true;
         } else {
-            botIcon.classList.remove('hidden');
-            loadingSpinner.classList.add('hidden');
-            document.getElementById('progressTrack').classList.add('hidden');
-            actionBtn.disabled = false;
-            
-            if (state === 'error') {
-                statusArea.classList.add('error');
-                botIcon.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
-            } else if (state === 'success') {
-                statusArea.classList.add('success');
-                botIcon.innerHTML = '<i class="fas fa-check-circle"></i>';
-            }
+            botIcon.classList.remove('hidden'); loadingSpinner.classList.add('hidden');
+            document.getElementById('progressTrack').classList.add('hidden'); actionBtn.disabled = false;
+            if (state === 'error') { statusArea.classList.add('error'); botIcon.innerHTML = '<i class="fas fa-exclamation-triangle"></i>'; }
+            else if (state === 'success') { statusArea.classList.add('success'); botIcon.innerHTML = '<i class="fas fa-check-circle"></i>'; }
         }
     }
 
-    function downloadBlob(blob, originalQuery) {
+    function downloadBlob(blob, query) {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.style.display = 'none';
-        a.href = url;
-        const cleanName = originalQuery.replace(/[^א-תa-zA-Z0-9]/g, '_');
-        a.download = `AlonBot_${cleanName}_${Date.now()}.pdf`;
-        document.body.appendChild(a);
-        a.click();
+        a.style.display = 'none'; a.href = url;
+        a.download = `AlonBot_${query.replace(/\s+/g, '_')}.pdf`;
+        document.body.appendChild(a); a.click();
         setTimeout(() => { window.URL.revokeObjectURL(url); document.body.removeChild(a); }, 1000);
     }
 });
 
-// רקע חלקיקים
+// רקע חלקיקים (אפקט ויזואלי)
 function initParticleNetwork() {
     const canvas = document.getElementById('particleCanvas');
     const ctx = canvas.getContext('2d');
