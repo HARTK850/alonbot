@@ -111,9 +111,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 method: 'GET',
                 headers: { 'x-gemini-api-key': currentUserApiKey }
             });
+
+            console.log("Response status:", response.status);
             
             if (!response.ok) {
                 const errData = await response.json();
+                console.log(errData);
                 if (response.status === 401) { localStorage.removeItem('geminiApiKey'); currentUserApiKey = ''; }
                 throw new Error(errData.error || "שגיאה בחיפוש.");
             }
