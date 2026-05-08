@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>מנוע חיפוש - עלוני שבת PDF</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1><i class="fas fa-book-open"></i> חיפוש עלוני שבת</h1>
+            <p>חפש כל עלון (למשל: "שיחת השבוע", "עלון לילדים", "פנינה לשבת") והורד ישירות כ-PDF</p>
+        </header>
+
+        <main>
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="הקלד שם של עלון או נושא..." autocomplete="off">
+                <button id="searchBtn"><i class="fas fa-search"></i> חפש והורד</button>
+            </div>
+
+            <div id="statusArea" class="status-area hidden">
+                <div class="loader" id="loader"></div>
+                <p id="statusText">מעבד את הבקשה...</p>
+            </div>
+
+            <div id="errorArea" class="error-area hidden">
+                <i class="fas fa-exclamation-circle"></i>
+                <p id="errorText"></p>
+            </div>
+
+            <div id="successArea" class="success-area hidden">
+                <i class="fas fa-check-circle"></i>
+                <p>הקובץ נמצא והורד בהצלחה!</p>
+            </div>
+        </main>
+
+        <footer>
+            <p>נבנה באמצעות GitHub Pages, Vercel ו-Gemini 3.1 Flash Lite Preview</p>
+        </footer>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
