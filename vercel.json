@@ -1,21 +1,10 @@
 {
   "version": 2,
   "rewrites": [
-    {
-      "source": "/api/search",
-      "destination": "/api/search.py"
-    },
-    {
-      "source": "/style.css",
-      "destination": "/public/style.css"
-    },
-    {
-      "source": "/app.js",
-      "destination": "/public/app.js"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/public/$1"
-    }
+    { "source": "/api/search",   "destination": "/api/search.py"   },
+    { "source": "/api/download", "destination": "/api/download.py" },
+    { "source": "/style.css",    "destination": "/public/style.css" },
+    { "source": "/app.js",       "destination": "/public/app.js"   },
+    { "source": "/(.*)",         "destination": "/public/$1"        }
   ]
 }
