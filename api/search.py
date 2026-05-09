@@ -147,11 +147,13 @@ def find_pdf(api_key: str, bulletin: str):
 class handler(BaseHTTPRequestHandler):
 
     def _cors(self):
+        """מגדיר כותרות שמאפשרות לכל אתר (כולל GitHub) לגשת לשרת הזה"""
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
     def do_OPTIONS(self):
+        """טיפול בבקשת 'בדיקה' שהדפדפן שולח לפני ה-POST"""
         self.send_response(200)
         self._cors()
         self.end_headers()
@@ -197,9 +199,10 @@ class handler(BaseHTTPRequestHandler):
         })
 
     def _json(self, code, obj):
+        """שליחת תשובה בפורמט JSON עם כותרות CORS"""
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
-        self._cors()
+        self._cors() # שורה קריטית - מוסיפה את אישור הגישה לתשובה
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
