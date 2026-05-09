@@ -3,7 +3,8 @@
    API base: same origin (Vercel functions)
 ═══════════════════════════════════════ */
 
-const API_BASE = "/api";
+// שנה את השורה הזו מהכתובת היחסית לכתובת המלאה של השרת שלך
+const API_BASE = "https://alonbot.vercel.app/api";
 const HIST_KEY = "alonbot_history";
 let   history  = [];
 
