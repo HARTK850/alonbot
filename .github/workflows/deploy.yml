@@ -1,0 +1,30 @@
+name: Deploy Static Content
+on:
+  push:
+    branches: ["main"] # מפעיל את התהליך בכל דחיפה לענף הראשי
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/setup-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # כאן אתה מגדיר את הנתיב לתיקייה שבה נמצא ה-index.html שלך
+          # לפי ה-vercel.json שלך, נראה שזה בתוך תיקיית public
+          path: './public' 
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
