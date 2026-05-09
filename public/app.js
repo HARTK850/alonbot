@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════
    AlonBot – Frontend Logic
-   API base: same origin (Vercel functions)
-═══════════════════════════════════════ */
+   כל הורדת PDF עוברת דרך /api/download
+   ═══════════════════════════════════════ */
 
 const API_BASE = "/api";
 const HIST_KEY = "alonbot_history";
@@ -44,32 +44,40 @@ async function doSearch() {
   const apiKey   = document.getElementById("apiKey").value.trim();
   const bulletin = document.getElementById("bulletinName").value.trim();
 
-  if (!apiKey)   { showStatus("error","⚠️","נא להזין Gemini API Key בקטע ההגדרות"); return; }
-  if (!bulletin) { showStatus("error","⚠️","נא להזין שם עלון"); return; }
+  if (!apiKey)   { showStatus("error", "⚠️", "נא להזין Gemini API Key בקטע ההגדרות"); return; }
+  if (!bulletin) { showStatus("error", "⚠️", "נא להזין שם עלון"); return; }
 
   setLoading(true);
   hideResult();
-  showStatus("searching","⏳","מחפש עלון – אנא המתן...");
+  showStatus("searching", "⏳", "מאתר פרשת השבוע ומחפש עלון עדכני...");
 
   try {
     const r = await fetch(API_BASE + "/search", {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ api_key: apiKey, bulletin })
+      body:    JSON.stringify({ api_key: apiKey, bulletin }),
     });
     const data = await r.json();
 
     if (data.success) {
       sessionStorage.setItem("alonbot_key", apiKey);
-      showStatus("found","✅", data.message || "נמצא!");
-      showResult(data.pdf_url, data.filename, bulletin);
-      addHist(bulletin, true, data.pdf_url, data.filename);
+
+      const parashaInfo = data.parasha
+        ? ` | פרשת ${data.parasha}`
+        : "";
+      const hebrewInfo = data.hebrew_date
+        ? ` | ${data.hebrew_date}`
+        : "";
+
+      showStatus("found", "✅", (data.message || "נמצא!") + parashaInfo + hebrewInfo);
+      showResult(data.download_url, data.filename, bulletin, data.parasha);
+      addHist(bulletin, true, data.download_url, data.filename, data.parasha);
     } else {
-      showStatus("error","❌", data.error || "לא נמצא");
-      addHist(bulletin, false, null, null);
+      showStatus("error", "❌", data.error || "לא נמצא");
+      addHist(bulletin, false, null, null, "");
     }
   } catch (e) {
-    showStatus("error","❌","שגיאת תקשורת עם השרת");
+    showStatus("error", "❌", "שגיאת תקשורת עם השרת");
   } finally {
     setLoading(false);
     renderHist();
@@ -78,7 +86,7 @@ async function doSearch() {
 
 function setLoading(on) {
   const btn = document.getElementById("searchBtn");
-  document.getElementById("btnLabel").style.display  = on ? "none" : "";
+  document.getElementById("btnLabel").style.display   = on ? "none" : "";
   document.getElementById("btnSpinner").style.display = on ? "" : "none";
   btn.disabled = on;
 }
@@ -94,14 +102,19 @@ function showStatus(type, icon, msg) {
 }
 
 // ─── Result ───────────────────────────
-function showResult(url, filename, bulletin) {
-  const box  = document.getElementById("resultBox");
+function showResult(downloadUrl, filename, bulletin, parasha) {
+  const box = document.getElementById("resultBox");
   box.style.display = "";
-  document.getElementById("resName").textContent = bulletin || filename;
+  document.getElementById("resName").textContent =
+    bulletin + (parasha ? ` – פרשת ${parasha}` : "");
+
+  // ← הורדה דרך הדומיין שלנו בלבד, ללא הפניה לחוץ
   const link = document.getElementById("downloadLink");
-  link.href  = url;
+  link.href  = downloadUrl;           // /api/download?token=...
   link.setAttribute("download", filename || "elon_shabbat.pdf");
+  link.removeAttribute("target");     // לא פותח tab חדש
 }
+
 function hideResult() {
   document.getElementById("resultBox").style.display = "none";
 }
@@ -117,14 +130,15 @@ function loadHist() {
 function saveHistStorage() {
   localStorage.setItem(HIST_KEY, JSON.stringify(history.slice(0, 40)));
 }
-function addHist(bulletin, ok, url, filename) {
+function addHist(bulletin, ok, downloadUrl, filename, parasha) {
   history.unshift({
-    id:       Date.now(),
+    id:          Date.now(),
     bulletin,
     ok,
-    url:      url || null,
-    filename: filename || null,
-    date:     new Date().toLocaleString("he-IL")
+    downloadUrl: downloadUrl || null,
+    filename:    filename    || null,
+    parasha:     parasha     || "",
+    date:        new Date().toLocaleString("he-IL"),
   });
   saveHistStorage();
 }
@@ -136,9 +150,9 @@ function clearHist() {
 }
 
 function renderHist() {
-  const list  = document.getElementById("histList");
-  const empty = document.getElementById("histEmpty");
-  const badge = document.getElementById("histCount");
+  const list     = document.getElementById("histList");
+  const empty    = document.getElementById("histEmpty");
+  const badge    = document.getElementById("histCount");
   const clearBtn = document.getElementById("clearHistBtn");
 
   badge.textContent = history.length;
@@ -149,29 +163,21 @@ function renderHist() {
     clearBtn.style.display = "none";
     return;
   }
-
-  empty.style.display = "none";
+  empty.style.display    = "none";
   clearBtn.style.display = "";
 
   list.innerHTML = history.map(h => `
     <div class="hist-row">
       <span class="hist-ic">${h.ok ? "📄" : "🔍"}</span>
-
       <div class="hist-info">
-        <div class="hist-name">${esc(h.bulletin)}</div>
+        <div class="hist-name">${esc(h.bulletin)}${h.parasha ? ` – ${esc(h.parasha)}` : ""}</div>
         <div class="hist-date">${h.date}</div>
       </div>
-
-      <span class="pill ${h.ok ? "ok" : "err"}">
-        ${h.ok ? "נמצא" : "לא נמצא"}
-      </span>
-
-      ${h.ok && h.url ? `
+      <span class="pill ${h.ok ? "ok" : "err"}">${h.ok ? "נמצא" : "לא נמצא"}</span>
+      ${h.ok && h.downloadUrl ? `
         <a class="hist-dl"
-           href="${esc(h.url)}"
-           download="${esc(h.filename || 'elon.pdf')}"
-           target="_blank"
-           rel="noopener">⬇️</a>
+           href="${esc(h.downloadUrl)}"
+           download="${esc(h.filename || 'elon.pdf')}">⬇️</a>
       ` : ""}
     </div>
   `).join("");
@@ -180,21 +186,21 @@ function renderHist() {
 // ─── Utilities ────────────────────────
 function esc(s) {
   return String(s).replace(/[&<>"']/g,
-    m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+    m => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
 }
 
 function toast(msg) {
   const t = document.createElement("div");
   t.textContent = msg;
   Object.assign(t.style, {
-    position:"fixed", bottom:"28px", left:"50%",
-    transform:"translateX(-50%)",
-    background:"rgba(30,30,60,.95)", backdropFilter:"blur(12px)",
-    color:"#f1f5f9", padding:"10px 22px",
-    borderRadius:"10px", fontSize:".9rem",
-    zIndex:"9999", boxShadow:"0 4px 20px rgba(0,0,0,.5)",
-    border:"1px solid rgba(99,102,241,.4)",
-    opacity:"0", transition:"opacity .3s"
+    position: "fixed", bottom: "28px", left: "50%",
+    transform: "translateX(-50%)",
+    background: "rgba(30,30,60,.95)", backdropFilter: "blur(12px)",
+    color: "#f1f5f9", padding: "10px 22px",
+    borderRadius: "10px", fontSize: ".9rem",
+    zIndex: "9999", boxShadow: "0 4px 20px rgba(0,0,0,.5)",
+    border: "1px solid rgba(99,102,241,.4)",
+    opacity: "0", transition: "opacity .3s",
   });
   document.body.appendChild(t);
   requestAnimationFrame(() => { t.style.opacity = "1"; });
