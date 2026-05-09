@@ -1,13 +1,21 @@
 {
   "version": 2,
-  "builds": [
-    { "src": "api/search.py", "use": "@vercel/python" },
-    { "src": "public/**", "use": "@vercel/static" }
-  ],
-  "routes": [
-    { "src": "/api/search", "dest": "api/search.py" },
-    { "src": "/style.css", "dest": "public/style.css" },
-    { "src": "/app.js", "dest": "public/app.js" },
-    { "src": "/(.*)", "dest": "public/index.html" }
+  "rewrites": [
+    {
+      "source": "/api/search",
+      "destination": "/api/search.py"
+    },
+    {
+      "source": "/style.css",
+      "destination": "/public/style.css"
+    },
+    {
+      "source": "/app.js",
+      "destination": "/public/app.js"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/public/$1"
+    }
   ]
 }
