@@ -1,8 +1,8 @@
-name: Deploy Static Content
+name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main"] # וודא שזה שם ה-Branch הראשי שלך
 
 permissions:
   contents: read
@@ -15,18 +15,22 @@ concurrency:
 
 jobs:
   deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Pages
-        uses: actions/setup-pages@v4
+        # זה ה-Action הרשמי והנכון
+        uses: actions/configure-pages@v5
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # וודא שהתיקייה public קיימת בשורש הפרויקט
+          # כאן אנחנו אומרים לו בדיוק לאיזו תיקייה לגשת
           path: './public'
 
       - name: Deploy to GitHub Pages
