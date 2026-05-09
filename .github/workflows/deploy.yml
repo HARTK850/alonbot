@@ -1,4 +1,5 @@
 name: Deploy Static Content
+
 on:
   push:
     branches: ["main"]
@@ -8,16 +9,12 @@ permissions:
   pages: write
   id-token: write
 
-# מבטיח שרק פריסה אחת תרוץ בכל פעם
 concurrency:
   group: "pages"
   cancel-in-progress: true
 
 jobs:
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps: deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -29,7 +26,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # וודא שהנתיב כאן תואם לתיקייה שבה נמצא ה-index.html שלך
+          # וודא שהתיקייה public קיימת בשורש הפרויקט
           path: './public'
 
       - name: Deploy to GitHub Pages
