@@ -1,15 +1,23 @@
 name: Deploy Static Content
 on:
   push:
-    branches: ["main"] # מפעיל את התהליך בכל דחיפה לענף הראשי
+    branches: ["main"]
 
 permissions:
   contents: read
   pages: write
   id-token: write
 
+# מבטיח שרק פריסה אחת תרוץ בכל פעם
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
 jobs:
   deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps: deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -21,9 +29,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # כאן אתה מגדיר את הנתיב לתיקייה שבה נמצא ה-index.html שלך
-          # לפי ה-vercel.json שלך, נראה שזה בתוך תיקיית public
-          path: './public' 
+          # וודא שהנתיב כאן תואם לתיקייה שבה נמצא ה-index.html שלך
+          path: './public'
 
       - name: Deploy to GitHub Pages
         id: deployment
