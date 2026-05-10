@@ -1,11 +1,10 @@
 /* ═══════════════════════════════════════
    AlonBot – Frontend Logic
-   כל הורדת PDF עוברת דרך /api/download
    ═══════════════════════════════════════ */
 
 const API_BASE = "/api";
 const HIST_KEY = "alonbot_history";
-let   history  = [];
+let history =[];
 
 // ─── Init ─────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
@@ -16,9 +15,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
 // ─── Toggle collapsible card ──────────
 function toggleCard(bodyId, chevronId) {
-  const body    = document.getElementById(bodyId);
+  const body = document.getElementById(bodyId);
   const chevron = document.getElementById(chevronId);
-  const hidden  = body.style.display === "none";
+  const hidden = body.style.display === "none";
   body.style.display = hidden ? "" : "none";
   chevron.classList.toggle("open", hidden);
 }
@@ -30,54 +29,78 @@ function loadKey() {
 }
 function saveKey() {
   const k = document.getElementById("apiKey").value.trim();
-  if (!k) { toast("⚠️ הזן מפתח תחילה"); return; }
+  if (!k) { toast("fa-solid fa-triangle-exclamation", "הזן מפתח תחילה"); return; }
   sessionStorage.setItem("alonbot_key", k);
-  toast("✅ מפתח נשמר");
+  toast("fa-solid fa-check", "מפתח נשמר בהצלחה");
 }
 function toggleApiVis() {
   const inp = document.getElementById("apiKey");
-  inp.type = inp.type === "password" ? "text" : "password";
+  const icon = inp.nextElementSibling.querySelector('i');
+  if (inp.type === "password") {
+    inp.type = "text";
+    icon.className = "fa-solid fa-eye-slash";
+  } else {
+    inp.type = "password";
+    icon.className = "fa-solid fa-eye";
+  }
+}
+
+// ─── Helper: Convert Base64 to Blob URL ───
+// כך הקובץ יורד ישירות מתוך המידע שחזר, בלי צורך לחזור לשרת!
+function base64ToBlobUrl(base64Data, contentType = 'application/pdf') {
+  const byteCharacters = atob(base64Data);
+  const byteArrays =[];
+  for (let offset = 0; offset < byteCharacters.length; offset += 512) {
+    const slice = byteCharacters.slice(offset, offset + 512);
+    const byteNumbers = new Array(slice.length);
+    for (let i = 0; i < slice.length; i++) {
+      byteNumbers[i] = slice.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    byteArrays.push(byteArray);
+  }
+  const blob = new Blob(byteArrays, { type: contentType });
+  return URL.createObjectURL(blob);
 }
 
 // ─── Search ───────────────────────────
 async function doSearch() {
-  const apiKey   = document.getElementById("apiKey").value.trim();
+  const apiKey = document.getElementById("apiKey").value.trim();
   const bulletin = document.getElementById("bulletinName").value.trim();
 
-  if (!apiKey)   { showStatus("error", "⚠️", "נא להזין Gemini API Key בקטע ההגדרות"); return; }
-  if (!bulletin) { showStatus("error", "⚠️", "נא להזין שם עלון"); return; }
+  if (!apiKey) { showStatus("error", "fa-solid fa-triangle-exclamation", "נא להזין מפתח Gemini בחלק ההגדרות"); return; }
+  if (!bulletin) { showStatus("error", "fa-solid fa-circle-exclamation", "נא להזין שם עלון לחיפוש"); return; }
 
   setLoading(true);
   hideResult();
-  showStatus("searching", "⏳", "מאתר פרשת השבוע ומחפש עלון עדכני...");
+  showStatus("searching", "fa-solid fa-spinner fa-spin", "מאתר פרשת שבוע וסורק מקורות לעלון...");
 
   try {
     const r = await fetch(API_BASE + "/search", {
-      method:  "POST",
+      method: "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ api_key: apiKey, bulletin }),
+      body: JSON.stringify({ api_key: apiKey, bulletin }),
     });
     const data = await r.json();
 
-    if (data.success) {
+    if (data.success && data.pdf_b64) {
       sessionStorage.setItem("alonbot_key", apiKey);
 
-      const parashaInfo = data.parasha
-        ? ` | פרשת ${data.parasha}`
-        : "";
-      const hebrewInfo = data.hebrew_date
-        ? ` | ${data.hebrew_date}`
-        : "";
+      const parashaInfo = data.parasha ? ` | פרשת ${data.parasha}` : "";
+      const hebrewInfo = data.hebrew_date ? ` | ${data.hebrew_date}` : "";
+      
+      // המרה ל-Blob מקומי
+      const blobUrl = base64ToBlobUrl(data.pdf_b64);
 
-      showStatus("found", "✅", (data.message || "נמצא!") + parashaInfo + hebrewInfo);
-      showResult(data.download_url, data.filename, bulletin, data.parasha);
-      addHist(bulletin, true, data.download_url, data.filename, data.parasha);
+      showStatus("found", "fa-solid fa-circle-check", (data.message || "נמצא בהצלחה!") + parashaInfo + hebrewInfo);
+      showResult(blobUrl, data.filename, bulletin, data.parasha);
+      addHist(bulletin, true, blobUrl, data.filename, data.parasha);
     } else {
-      showStatus("error", "❌", data.error || "לא נמצא");
+      showStatus("error", "fa-solid fa-circle-xmark", data.error || "לא נמצא עלון שעונה על הדרישות המדויקות");
       addHist(bulletin, false, null, null, "");
     }
   } catch (e) {
-    showStatus("error", "❌", "שגיאת תקשורת עם השרת");
+    showStatus("error", "fa-solid fa-wifi", "שגיאת תקשורת בחיבור לשרת");
   } finally {
     setLoading(false);
     renderHist();
@@ -86,18 +109,18 @@ async function doSearch() {
 
 function setLoading(on) {
   const btn = document.getElementById("searchBtn");
-  document.getElementById("btnLabel").style.display   = on ? "none" : "";
+  document.getElementById("btnLabel").style.display = on ? "none" : "";
   document.getElementById("btnSpinner").style.display = on ? "" : "none";
   btn.disabled = on;
 }
 
 // ─── Status ───────────────────────────
-function showStatus(type, icon, msg) {
+function showStatus(type, iconClass, msg) {
   const wrap = document.getElementById("statusWrap");
-  const bar  = document.getElementById("statusBar");
+  const bar = document.getElementById("statusBar");
   wrap.style.display = "";
-  bar.className      = "status-bar " + type;
-  document.getElementById("statusIcon").textContent = icon;
+  bar.className = "status-bar " + type;
+  document.getElementById("statusIcon").innerHTML = `<i class="${iconClass}"></i>`;
   document.getElementById("statusText").textContent = msg;
 }
 
@@ -105,54 +128,50 @@ function showStatus(type, icon, msg) {
 function showResult(downloadUrl, filename, bulletin, parasha) {
   const box = document.getElementById("resultBox");
   box.style.display = "";
-  document.getElementById("resName").textContent =
-    bulletin + (parasha ? ` – פרשת ${parasha}` : "");
+  document.getElementById("resName").textContent = bulletin + (parasha ? ` – פרשת ${parasha}` : "");
 
-  // ← הורדה דרך הדומיין שלנו בלבד, ללא הפניה לחוץ
   const link = document.getElementById("downloadLink");
-  link.href  = downloadUrl;           // /api/download?token=...
-  link.setAttribute("download", filename || "elon_shabbat.pdf");
-  link.removeAttribute("target");     // לא פותח tab חדש
+  link.href = downloadUrl;
+  link.setAttribute("download", filename || "alon_shabbat.pdf");
 }
 
 function hideResult() {
   document.getElementById("resultBox").style.display = "none";
 }
+
 function trackDownload() {
-  toast("⬇️ ההורדה החלה!");
+  toast("fa-solid fa-download", "הורדת הקובץ מתחילה...");
 }
 
 // ─── History ──────────────────────────
 function loadHist() {
   try { history = JSON.parse(localStorage.getItem(HIST_KEY) || "[]"); }
-  catch { history = []; }
+  catch { history =[]; }
 }
 function saveHistStorage() {
-  localStorage.setItem(HIST_KEY, JSON.stringify(history.slice(0, 40)));
+  // שומרים נתונים ללא URL ה-Blob מכיוון שהוא פג תוקף ברענון עמוד
+  const toSave = history.map(h => ({ ...h, downloadUrl: null }));
+  localStorage.setItem(HIST_KEY, JSON.stringify(toSave.slice(0, 30)));
 }
 function addHist(bulletin, ok, downloadUrl, filename, parasha) {
   history.unshift({
-    id:          Date.now(),
-    bulletin,
-    ok,
-    downloadUrl: downloadUrl || null,
-    filename:    filename    || null,
-    parasha:     parasha     || "",
-    date:        new Date().toLocaleString("he-IL"),
+    id: Date.now(),
+    bulletin, ok, downloadUrl, filename, parasha,
+    date: new Date().toLocaleString("he-IL", {hour: '2-digit', minute:'2-digit', day:'2-digit', month:'2-digit'}),
   });
   saveHistStorage();
 }
 function clearHist() {
-  if (!confirm("למחוק את כל ההיסטוריה?")) return;
-  history = [];
+  if (!confirm("האם למחוק את כל ההיסטוריה?")) return;
+  history =[];
   saveHistStorage();
   renderHist();
 }
 
 function renderHist() {
-  const list     = document.getElementById("histList");
-  const empty    = document.getElementById("histEmpty");
-  const badge    = document.getElementById("histCount");
+  const list = document.getElementById("histList");
+  const empty = document.getElementById("histEmpty");
+  const badge = document.getElementById("histCount");
   const clearBtn = document.getElementById("clearHistBtn");
 
   badge.textContent = history.length;
@@ -163,21 +182,21 @@ function renderHist() {
     clearBtn.style.display = "none";
     return;
   }
-  empty.style.display    = "none";
+  empty.style.display = "none";
   clearBtn.style.display = "";
 
   list.innerHTML = history.map(h => `
-    <div class="hist-row">
-      <span class="hist-ic">${h.ok ? "📄" : "🔍"}</span>
+    <div class="hist-row animate-fade-in">
+      <span class="hist-ic"><i class="${h.ok ? 'fa-regular fa-file-pdf' : 'fa-solid fa-magnifying-glass'}"></i></span>
       <div class="hist-info">
         <div class="hist-name">${esc(h.bulletin)}${h.parasha ? ` – ${esc(h.parasha)}` : ""}</div>
         <div class="hist-date">${h.date}</div>
       </div>
       <span class="pill ${h.ok ? "ok" : "err"}">${h.ok ? "נמצא" : "לא נמצא"}</span>
       ${h.ok && h.downloadUrl ? `
-        <a class="hist-dl"
-           href="${esc(h.downloadUrl)}"
-           download="${esc(h.filename || 'elon.pdf')}">⬇️</a>
+        <a class="hist-dl" href="${esc(h.downloadUrl)}" download="${esc(h.filename || 'alon.pdf')}">
+          <i class="fa-solid fa-download"></i> הורד
+        </a>
       ` : ""}
     </div>
   `).join("");
@@ -189,19 +208,10 @@ function esc(s) {
     m => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
 }
 
-function toast(msg) {
+function toast(iconClass, msg) {
   const t = document.createElement("div");
-  t.textContent = msg;
-  Object.assign(t.style, {
-    position: "fixed", bottom: "28px", left: "50%",
-    transform: "translateX(-50%)",
-    background: "rgba(30,30,60,.95)", backdropFilter: "blur(12px)",
-    color: "#f1f5f9", padding: "10px 22px",
-    borderRadius: "10px", fontSize: ".9rem",
-    zIndex: "9999", boxShadow: "0 4px 20px rgba(0,0,0,.5)",
-    border: "1px solid rgba(99,102,241,.4)",
-    opacity: "0", transition: "opacity .3s",
-  });
+  t.className = "toast-msg";
+  t.innerHTML = `<i class="${iconClass}"></i> <span>${msg}</span>`;
   document.body.appendChild(t);
   requestAnimationFrame(() => { t.style.opacity = "1"; });
   setTimeout(() => {
