@@ -249,13 +249,14 @@ def fetch_pdf_bytes(url: str) -> bytes | None:
 # ══════════════════════════════════════════════════════════════════
 # 5.  Gemini: ולידציה של תוכן ה-PDF
 # ══════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════
+# 5.  Gemini: ולידציה של תוכן ה-PDF
+# ══════════════════════════════════════════════════════════════════
 def gemini_validate_pdf(api_key: str, pdf_bytes: bytes,
                          bulletin: str, ctx: dict) -> bool:
     """
-    שולח את ה-PDF ל-Gemini ומבקש ממנו לאשר:
-      א. זהו גליון של "{bulletin}"
-      ב. הוא עוסק בפרשת {ctx['parasha']} / {ctx['parasha_en']}
-    מחזיר True אם אושר, False אחרת.
+    שולח את ה-PDF ל-Gemini ומבקש ממנו לאשר.
+    תיקון: אם קורית שגיאה (Exception) מחזירים False, כדי לא לתת בטעות עלון שגוי!
     """
     try:
         genai.configure(api_key=api_key)
@@ -267,25 +268,27 @@ def gemini_validate_pdf(api_key: str, pdf_bytes: bytes,
 
         prompt = f"""בדוק את קובץ ה-PDF המצורף וענה אך ורק YES או NO.
 
-שאלה: האם קובץ זה הוא גליון/עלון של "{bulletin}" שעוסק בפרשת השבוע "{ctx['parasha']}" (באנגלית: {ctx['parasha_en']})?
+שאלה: האם קובץ זה הוא בהכרח ובוודאות הגליון/עלון של "{bulletin}" שעוסק בפרשת השבוע "{ctx['parasha']}" (באנגלית: {ctx['parasha_en']})?
 
-כללים:
-- ענה YES רק אם גם שם העלון וגם הפרשה תואמים.
-- אם הפרשה לא מוזכרת בכלל בקובץ – ענה NO.
-- אם שם העלון לא תואם – ענה NO.
-- אל תוסיף הסברים. רק YES או NO.
+כללים חמורים:
+- ענה YES רק אם גם שם העלון המדויק ("{bulletin}") וגם שם הפרשה ("{ctx['parasha']}") מופיעים בקובץ.
+- אם מדובר בעלון אחר לגמרי או שם דומה אך לא זהה - ענה NO.
+- אם הפרשה לא מוזכרת בקובץ – ענה NO.
+- אם אינך בטוח ב-100% – ענה NO.
+- אל תוסיף שום הסבר. רק מילה אחת: YES או NO.
 """
         resp = model.generate_content([
             {"mime_type": "application/pdf", "data": b64},
             prompt,
         ])
         answer = resp.text.strip().upper()
-        log.info("Gemini validation answer: '%s'", answer)
+        log.info("Gemini validation answer for '%s': '%s'", bulletin, answer)
         return answer.startswith("YES")
     except Exception as e:
         log.warning("Gemini validation error: %s", e)
-        # במקרה של שגיאה – נעביר (כדי לא לחסום הכל)
-        return True
+        # תיקון קריטי: אם יש שגיאה ב-API של ג'מיני, אנחנו פוסלים את הקובץ.
+        # הקוד הקודם החזיר True ואישר למעשה עלונים אקראיים כשהייתה שגיאת תקשורת.
+        return False
 
 # ══════════════════════════════════════════════════════════════════
 # 6.  לוגיקה ראשית
