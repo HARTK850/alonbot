@@ -1,221 +1,239 @@
-/* ═══════════════════════════════════════
-   AlonBot – Frontend Logic
-   ═══════════════════════════════════════ */
-
 const API_BASE = "/api";
 const HIST_KEY = "alonbot_history";
 let history =[];
 
-// ─── Init ─────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
-  loadKey();
-  loadHist();
-  renderHist();
+    initParticles();
+    loadKey();
+    loadHist();
+    renderHist();
+    
+    // Setup Modal
+    const modal = document.getElementById('settingsModal');
+    document.getElementById('openSettingsBtn').onclick = () => modal.classList.remove('hidden');
+    document.getElementById('closeModalBtn').onclick = () => modal.classList.add('hidden');
+    document.getElementById('togglePasswordBtn').onclick = togglePassword;
+    document.getElementById('saveApiKeyBtn').onclick = saveKey;
 });
 
-// ─── Toggle collapsible card ──────────
-function toggleCard(bodyId, chevronId) {
-  const body = document.getElementById(bodyId);
-  const chevron = document.getElementById(chevronId);
-  const hidden = body.style.display === "none";
-  body.style.display = hidden ? "" : "none";
-  chevron.classList.toggle("open", hidden);
+// --- UI Actions ---
+function setInput(text) {
+    document.getElementById("botInput").value = text;
+    doSearch();
 }
 
-// ─── API Key ──────────────────────────
+function showToast(msg) {
+    const container = document.getElementById('toastContainer');
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.innerHTML = `<i class="fas fa-check-circle"></i> ${msg}`;
+    container.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+}
+
+function togglePassword() {
+    const input = document.getElementById('apiKeyInput');
+    const icon = document.querySelector('#togglePasswordBtn i');
+    if (input.type === 'password') {
+        input.type = 'text';
+        icon.className = 'fas fa-eye-slash';
+    } else {
+        input.type = 'password';
+        icon.className = 'fas fa-eye';
+    }
+}
+
+// --- API Key ---
 function loadKey() {
-  const k = sessionStorage.getItem("alonbot_key");
-  if (k) document.getElementById("apiKey").value = k;
+    const k = sessionStorage.getItem("alonbot_key");
+    if (k) document.getElementById("apiKeyInput").value = k;
 }
 function saveKey() {
-  const k = document.getElementById("apiKey").value.trim();
-  if (!k) { toast("fa-solid fa-triangle-exclamation", "הזן מפתח תחילה"); return; }
-  sessionStorage.setItem("alonbot_key", k);
-  toast("fa-solid fa-check", "מפתח נשמר בהצלחה");
-}
-function toggleApiVis() {
-  const inp = document.getElementById("apiKey");
-  const icon = inp.nextElementSibling.querySelector('i');
-  if (inp.type === "password") {
-    inp.type = "text";
-    icon.className = "fa-solid fa-eye-slash";
-  } else {
-    inp.type = "password";
-    icon.className = "fa-solid fa-eye";
-  }
+    const k = document.getElementById("apiKeyInput").value.trim();
+    if (!k) { alert("יש להזין מפתח תחילה"); return; }
+    sessionStorage.setItem("alonbot_key", k);
+    document.getElementById('settingsModal').classList.add('hidden');
+    showToast("המפתח נשמר בהצלחה!");
 }
 
-// ─── Helper: Convert Base64 to Blob URL ───
-// כך הקובץ יורד ישירות מתוך המידע שחזר, בלי צורך לחזור לשרת!
+// --- Search Logic ---
 function base64ToBlobUrl(base64Data, contentType = 'application/pdf') {
-  const byteCharacters = atob(base64Data);
-  const byteArrays =[];
-  for (let offset = 0; offset < byteCharacters.length; offset += 512) {
-    const slice = byteCharacters.slice(offset, offset + 512);
-    const byteNumbers = new Array(slice.length);
-    for (let i = 0; i < slice.length; i++) {
-      byteNumbers[i] = slice.charCodeAt(i);
+    const byteCharacters = atob(base64Data);
+    const byteArrays =[];
+    for (let offset = 0; offset < byteCharacters.length; offset += 512) {
+        const slice = byteCharacters.slice(offset, offset + 512);
+        const byteNumbers = new Array(slice.length);
+        for (let i = 0; i < slice.length; i++) { byteNumbers[i] = slice.charCodeAt(i); }
+        byteArrays.push(new Uint8Array(byteNumbers));
     }
-    const byteArray = new Uint8Array(byteNumbers);
-    byteArrays.push(byteArray);
-  }
-  const blob = new Blob(byteArrays, { type: contentType });
-  return URL.createObjectURL(blob);
+    return URL.createObjectURL(new Blob(byteArrays, { type: contentType }));
 }
 
-// ─── Search ───────────────────────────
 async function doSearch() {
-  const apiKey = document.getElementById("apiKey").value.trim();
-  const bulletin = document.getElementById("bulletinName").value.trim();
+    const apiKey = document.getElementById("apiKeyInput").value.trim();
+    const query = document.getElementById("botInput").value.trim();
 
-  if (!apiKey) { showStatus("error", "fa-solid fa-triangle-exclamation", "נא להזין מפתח Gemini בחלק ההגדרות"); return; }
-  if (!bulletin) { showStatus("error", "fa-solid fa-circle-exclamation", "נא להזין שם עלון לחיפוש"); return; }
-
-  setLoading(true);
-  hideResult();
-  showStatus("searching", "fa-solid fa-spinner fa-spin", "מאתר פרשת שבוע וסורק מקורות לעלון...");
-
-  try {
-    const r = await fetch(API_BASE + "/search", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ api_key: apiKey, bulletin }),
-    });
-    const data = await r.json();
-
-    if (data.success && data.pdf_b64) {
-      sessionStorage.setItem("alonbot_key", apiKey);
-
-      const parashaInfo = data.parasha ? ` | פרשת ${data.parasha}` : "";
-      const hebrewInfo = data.hebrew_date ? ` | ${data.hebrew_date}` : "";
-      
-      // המרה ל-Blob מקומי
-      const blobUrl = base64ToBlobUrl(data.pdf_b64);
-
-      showStatus("found", "fa-solid fa-circle-check", (data.message || "נמצא בהצלחה!") + parashaInfo + hebrewInfo);
-      showResult(blobUrl, data.filename, bulletin, data.parasha);
-      addHist(bulletin, true, blobUrl, data.filename, data.parasha);
-    } else {
-      showStatus("error", "fa-solid fa-circle-xmark", data.error || "לא נמצא עלון שעונה על הדרישות המדויקות");
-      addHist(bulletin, false, null, null, "");
+    if (!apiKey) {
+        document.getElementById('settingsModal').classList.remove('hidden');
+        return;
     }
-  } catch (e) {
-    showStatus("error", "fa-solid fa-wifi", "שגיאת תקשורת בחיבור לשרת");
-  } finally {
-    setLoading(false);
-    renderHist();
-  }
+    if (!query) return;
+
+    setStatus('loading', 'מנתח את בקשתך ומחפש במאגרי העלונים...');
+    const btn = document.getElementById('actionBtn');
+    btn.disabled = true;
+
+    try {
+        const r = await fetch(API_BASE + "/search", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ api_key: apiKey, query: query })
+        });
+        const data = await r.json();
+
+        if (data.success && data.pdf_b64) {
+            sessionStorage.setItem("alonbot_key", apiKey);
+            const blobUrl = base64ToBlobUrl(data.pdf_b64);
+            
+            // אוטומטית פותח את ההורדה
+            const link = document.createElement('a');
+            link.href = blobUrl;
+            link.download = data.filename || "alon.pdf";
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            setStatus('success', data.message || "העלון נמצא בהצלחה וההורדה מתחילה!");
+            addHist(data.filename, blobUrl);
+            showToast("ההורדה החלה!");
+        } else {
+            // טיפול חכם בשגיאות עם הצעות חלופיות!
+            setStatus('error', data.error || "לא מצאנו את העלון המבוקש.");
+            if (data.suggestions && data.suggestions.length > 0) {
+                showSuggestions(data.suggestions);
+            }
+        }
+    } catch (e) {
+        setStatus('error', "שגיאת תקשורת. בדוק את חיבור האינטרנט שלך.");
+    } finally {
+        btn.disabled = false;
+    }
 }
 
-function setLoading(on) {
-  const btn = document.getElementById("searchBtn");
-  document.getElementById("btnLabel").style.display = on ? "none" : "";
-  document.getElementById("btnSpinner").style.display = on ? "" : "none";
-  btn.disabled = on;
+function setStatus(type, msg) {
+    const box = document.getElementById('botStatusArea');
+    const icon = document.getElementById('botIcon');
+    const spinner = document.getElementById('loadingSpinner');
+    const text = document.getElementById('botMessage');
+    const suggestions = document.getElementById('suggestionsArea');
+    
+    box.classList.remove('hidden', 'error', 'success');
+    suggestions.classList.add('hidden');
+    suggestions.innerHTML = '';
+    
+    if (type === 'loading') {
+        icon.classList.add('hidden');
+        spinner.classList.remove('hidden');
+    } else {
+        spinner.classList.add('hidden');
+        icon.classList.remove('hidden');
+        box.classList.add(type);
+        if (type === 'error') icon.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
+        if (type === 'success') icon.innerHTML = '<i class="fas fa-check-circle"></i>';
+    }
+    text.textContent = msg;
 }
 
-// ─── Status ───────────────────────────
-function showStatus(type, iconClass, msg) {
-  const wrap = document.getElementById("statusWrap");
-  const bar = document.getElementById("statusBar");
-  wrap.style.display = "";
-  bar.className = "status-bar " + type;
-  document.getElementById("statusIcon").innerHTML = `<i class="${iconClass}"></i>`;
-  document.getElementById("statusText").textContent = msg;
+function showSuggestions(suggestionsArray) {
+    const container = document.getElementById('suggestionsArea');
+    container.innerHTML = '<span style="width:100%; font-size:0.85rem; color:var(--text-muted);">אולי התכוונת ל:</span>';
+    
+    suggestionsArray.forEach(sug => {
+        const span = document.createElement('span');
+        span.className = 'tag suggestion-tag';
+        span.textContent = sug;
+        span.onclick = () => setInput(sug);
+        container.appendChild(span);
+    });
+    container.classList.remove('hidden');
 }
 
-// ─── Result ───────────────────────────
-function showResult(downloadUrl, filename, bulletin, parasha) {
-  const box = document.getElementById("resultBox");
-  box.style.display = "";
-  document.getElementById("resName").textContent = bulletin + (parasha ? ` – פרשת ${parasha}` : "");
-
-  const link = document.getElementById("downloadLink");
-  link.href = downloadUrl;
-  link.setAttribute("download", filename || "alon_shabbat.pdf");
-}
-
-function hideResult() {
-  document.getElementById("resultBox").style.display = "none";
-}
-
-function trackDownload() {
-  toast("fa-solid fa-download", "הורדת הקובץ מתחילה...");
-}
-
-// ─── History ──────────────────────────
+// --- History ---
 function loadHist() {
-  try { history = JSON.parse(localStorage.getItem(HIST_KEY) || "[]"); }
-  catch { history =[]; }
+    try { history = JSON.parse(localStorage.getItem(HIST_KEY) || "[]"); } catch { history =[]; }
 }
-function saveHistStorage() {
-  // שומרים נתונים ללא URL ה-Blob מכיוון שהוא פג תוקף ברענון עמוד
-  const toSave = history.map(h => ({ ...h, downloadUrl: null }));
-  localStorage.setItem(HIST_KEY, JSON.stringify(toSave.slice(0, 30)));
-}
-function addHist(bulletin, ok, downloadUrl, filename, parasha) {
-  history.unshift({
-    id: Date.now(),
-    bulletin, ok, downloadUrl, filename, parasha,
-    date: new Date().toLocaleString("he-IL", {hour: '2-digit', minute:'2-digit', day:'2-digit', month:'2-digit'}),
-  });
-  saveHistStorage();
+function addHist(filename, url) {
+    history.unshift({ name: filename, url: url, date: new Date().toLocaleDateString('he-IL') });
+    localStorage.setItem(HIST_KEY, JSON.stringify(history.slice(0, 20).map(h=>({...h, url:null}))));
+    renderHist();
 }
 function clearHist() {
-  if (!confirm("האם למחוק את כל ההיסטוריה?")) return;
-  history =[];
-  saveHistStorage();
-  renderHist();
+    history =[];
+    localStorage.removeItem(HIST_KEY);
+    renderHist();
 }
-
 function renderHist() {
-  const list = document.getElementById("histList");
-  const empty = document.getElementById("histEmpty");
-  const badge = document.getElementById("histCount");
-  const clearBtn = document.getElementById("clearHistBtn");
-
-  badge.textContent = history.length;
-
-  if (!history.length) {
-    empty.style.display = "";
+    const list = document.getElementById("historyList");
+    const clearBtn = document.getElementById("clearHistoryBtn");
     list.innerHTML = "";
-    clearBtn.style.display = "none";
-    return;
-  }
-  empty.style.display = "none";
-  clearBtn.style.display = "";
-
-  list.innerHTML = history.map(h => `
-    <div class="hist-row animate-fade-in">
-      <span class="hist-ic"><i class="${h.ok ? 'fa-regular fa-file-pdf' : 'fa-solid fa-magnifying-glass'}"></i></span>
-      <div class="hist-info">
-        <div class="hist-name">${esc(h.bulletin)}${h.parasha ? ` – ${esc(h.parasha)}` : ""}</div>
-        <div class="hist-date">${h.date}</div>
-      </div>
-      <span class="pill ${h.ok ? "ok" : "err"}">${h.ok ? "נמצא" : "לא נמצא"}</span>
-      ${h.ok && h.downloadUrl ? `
-        <a class="hist-dl" href="${esc(h.downloadUrl)}" download="${esc(h.filename || 'alon.pdf')}">
-          <i class="fa-solid fa-download"></i> הורד
-        </a>
-      ` : ""}
-    </div>
-  `).join("");
+    
+    if (!history.length) {
+        list.innerHTML = '<div class="empty-history">אין היסטוריית הורדות</div>';
+        clearBtn.classList.add('hidden');
+        return;
+    }
+    
+    clearBtn.classList.remove('hidden');
+    history.forEach(h => {
+        const item = document.createElement('div');
+        item.className = 'history-item';
+        item.innerHTML = `<div><i class="fas fa-file-pdf"></i> ${h.name.replace('.pdf','')}</div> 
+                          <span style="font-size:0.75rem; color:#888;">${h.date}</span>`;
+        // מאפשר הורדה חוזרת במידה וה-URL עדיין פעיל בסשן הנוכחי
+        if (h.url) {
+            item.onclick = () => {
+                const a = document.createElement('a'); a.href = h.url; a.download = h.name; a.click();
+            };
+        }
+        list.appendChild(item);
+    });
 }
 
-// ─── Utilities ────────────────────────
-function esc(s) {
-  return String(s).replace(/[&<>"']/g,
-    m => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
-}
+// --- Particles Background Animation ---
+function initParticles() {
+    const canvas = document.getElementById('particleCanvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    
+    let particles =[];
+    for(let i=0; i<80; i++) {
+        particles.push({
+            x: Math.random() * canvas.width,
+            y: Math.random() * canvas.height,
+            vx: (Math.random() - 0.5) * 0.5,
+            vy: (Math.random() - 0.5) * 0.5,
+            radius: Math.random() * 2 + 1
+        });
+    }
 
-function toast(iconClass, msg) {
-  const t = document.createElement("div");
-  t.className = "toast-msg";
-  t.innerHTML = `<i class="${iconClass}"></i> <span>${msg}</span>`;
-  document.body.appendChild(t);
-  requestAnimationFrame(() => { t.style.opacity = "1"; });
-  setTimeout(() => {
-    t.style.opacity = "0";
-    setTimeout(() => t.remove(), 400);
-  }, 2600);
+    function animate() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        particles.forEach(p => {
+            p.x += p.vx; p.y += p.vy;
+            if(p.x < 0 || p.x > canvas.width) p.vx *= -1;
+            if(p.y < 0 || p.y > canvas.height) p.vy *= -1;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(0, 206, 201, 0.3)';
+            ctx.fill();
+        });
+        requestAnimationFrame(animate);
+    }
+    animate();
+    
+    window.addEventListener('resize', () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    });
 }
