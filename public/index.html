@@ -6,26 +6,20 @@
   <title>מוצא עלוני שבת | AlonBot</title>
   <link rel="stylesheet" href="style.css"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
-  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800;900&display=swap"
-        rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+  <!-- ספריית FontAwesome לאייקונים מקצועיים -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
 </head>
 <body>
-  <div class="bg-orbs">
-    <div class="orb orb1"></div>
-    <div class="orb orb2"></div>
-    <div class="orb orb3"></div>
-  </div>
-
   <div class="app">
-
     <!-- HEADER -->
-    <header class="header">
+    <header class="header animate-fade-in">
       <div class="header-content">
         <div class="logo-group">
-          <div class="logo-icon">📖</div>
+          <div class="logo-icon"><i class="fa-solid fa-book-open-reader"></i></div>
           <div class="logo-text">
             <h1>מוצא עלוני שבת</h1>
-            <p>חיפוש והורדת עלוני שבת · מופעל על ידי Gemini AI</p>
+            <p>חיפוש והורדת עלוני שבת בצורה חכמה ומדויקת</p>
           </div>
         </div>
         <div class="header-badge">AlonBot</div>
@@ -33,51 +27,48 @@
     </header>
 
     <main class="main">
-
       <!-- API KEY CARD -->
-      <div class="card" id="apiCard">
+      <div class="card animate-slide-up" id="apiCard" style="animation-delay: 0.1s;">
         <div class="card-header" onclick="toggleCard('apiBody','apiChevron')">
           <div class="card-title">
-            <span class="card-icon">🔑</span>
+            <span class="card-icon"><i class="fa-solid fa-key"></i></span>
             <span>הגדרות Gemini API</span>
           </div>
-          <span class="chevron" id="apiChevron">▼</span>
+          <span class="chevron" id="apiChevron"><i class="fa-solid fa-chevron-down"></i></span>
         </div>
-        <div class="card-body" id="apiBody">
-          <label class="field-label">Gemini API Key</label>
+        <div class="card-body" id="apiBody" style="display: none;">
+          <label class="field-label">מפתח התחברות (API Key)</label>
           <div class="field-row">
-            <input class="field-input" type="password" id="apiKey"
-                   placeholder="AIza..."/>
-            <button class="icon-btn" onclick="toggleApiVis()" title="הצג/הסתר">👁</button>
-            <button class="btn btn-soft" onclick="saveKey()">שמור</button>
+            <input class="field-input" type="password" id="apiKey" placeholder="הכנס את המפתח שלך כאן..."/>
+            <button class="icon-btn" onclick="toggleApiVis()" title="הצג/הסתר"><i class="fa-solid fa-eye"></i></button>
+            <button class="btn btn-soft" onclick="saveKey()"><i class="fa-solid fa-floppy-disk"></i> שמור</button>
           </div>
           <p class="hint">
-            קבל מפתח חינמי בכתובת <strong>aistudio.google.com</strong> ←
-            "Get API Key". המפתח נשמר אצלך בדפדפן בלבד.
+            המפתח נשמר אצלך בדפדפן בלבד. ניתן להנפיק מפתח חינמי ב-Google AI Studio.
           </p>
         </div>
       </div>
 
       <!-- SEARCH CARD -->
-      <div class="card search-card">
+      <div class="card search-card animate-slide-up" style="animation-delay: 0.2s;">
         <div class="card-header-static">
-          <span class="card-icon">🔍</span>
+          <span class="card-icon"><i class="fa-solid fa-magnifying-glass"></i></span>
           <span class="card-title-text">חיפוש עלון</span>
         </div>
         <div class="card-body">
-          <label class="field-label">שם העלון</label>
+          <label class="field-label">שם העלון המבוקש</label>
           <div class="search-row">
             <input class="field-input search-input" type="text" id="bulletinName"
-                   placeholder="שיחת השבוע, הגיוני, מורשת, פניני הלכה..."
+                   placeholder="לדוגמה: שיחת השבוע, פניני הלכה, מורשת..."
                    onkeydown="if(event.key==='Enter') doSearch()"/>
             <button class="btn btn-primary" id="searchBtn" onclick="doSearch()">
-              <span id="btnLabel">חפש עלון ✨</span>
+              <span id="btnLabel"><i class="fa-solid fa-wand-magic-sparkles"></i> חפש עלון</span>
               <span id="btnSpinner" class="spinner" style="display:none"></span>
             </button>
           </div>
 
           <!-- STATUS BAR -->
-          <div id="statusWrap" style="display:none" class="status-wrap">
+          <div id="statusWrap" style="display:none" class="status-wrap animate-fade-in">
             <div id="statusBar" class="status-bar">
               <span id="statusIcon" class="status-icon"></span>
               <span id="statusText"></span>
@@ -85,52 +76,47 @@
           </div>
 
           <!-- RESULT BOX -->
-          <div id="resultBox" style="display:none" class="result-box">
+          <div id="resultBox" style="display:none" class="result-box animate-slide-up">
             <div class="result-inner">
               <div class="result-file">
-                <div class="file-icon">📄</div>
+                <div class="file-icon"><i class="fa-solid fa-file-pdf"></i></div>
                 <div class="file-meta">
                   <div class="file-name" id="resName"></div>
-                  <div class="file-sub">קובץ PDF מוכן להורדה</div>
+                  <div class="file-sub">קובץ PDF נבדק ומוכן להורדה ישירה</div>
                 </div>
               </div>
-              <a id="downloadLink" href="#" class="btn btn-download" target="_blank"
-                 rel="noopener noreferrer" onclick="trackDownload()">
-                ⬇️ הורד PDF
+              <a id="downloadLink" href="#" class="btn btn-download" onclick="trackDownload()">
+                <i class="fa-solid fa-download"></i> הורד קובץ
               </a>
             </div>
           </div>
-
         </div>
       </div>
 
       <!-- HISTORY CARD -->
-      <div class="card">
+      <div class="card animate-slide-up" style="animation-delay: 0.3s;">
         <div class="card-header" onclick="toggleCard('histBody','histChevron')">
           <div class="card-title">
-            <span class="card-icon">📋</span>
+            <span class="card-icon"><i class="fa-solid fa-clock-rotate-left"></i></span>
             <span>היסטוריית חיפושים</span>
             <span class="badge" id="histCount">0</span>
           </div>
-          <span class="chevron" id="histChevron">▼</span>
+          <span class="chevron" id="histChevron"><i class="fa-solid fa-chevron-down"></i></span>
         </div>
         <div class="card-body" id="histBody">
-          <div id="histEmpty" class="empty-msg">אין חיפושים עדיין</div>
+          <div id="histEmpty" class="empty-msg">טרם בוצעו חיפושים.</div>
           <div id="histList"></div>
-          <button class="btn btn-ghost btn-sm" id="clearHistBtn"
-                  onclick="clearHist()" style="display:none;margin-top:12px">
-            🗑 נקה היסטוריה
+          <button class="btn btn-ghost btn-sm" id="clearHistBtn" onclick="clearHist()" style="display:none;margin-top:16px">
+            <i class="fa-solid fa-trash-can"></i> נקה היסטוריה
           </button>
         </div>
       </div>
-
     </main>
 
-    <footer class="footer">
-      <p>AlonBot · מופעל על Vercel + Gemini 3.1 Flash-Lite</p>
-      <p class="footer-sub">כל הורדת PDF מתבצעת ישירות ממקור הקובץ</p>
+    <footer class="footer animate-fade-in" style="animation-delay: 0.4s;">
+      <p>AlonBot · מופעל על ידי מודל Gemini 3.1</p>
+      <p class="footer-sub">ההורדה מתבצעת ישירות לשרת ללא הפניות לחוץ</p>
     </footer>
-
   </div>
 
   <script src="app.js"></script>
