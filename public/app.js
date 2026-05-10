@@ -8,7 +8,6 @@ document.addEventListener("DOMContentLoaded", () => {
     loadHist();
     renderHist();
     
-    // Setup Modal
     const modal = document.getElementById('settingsModal');
     document.getElementById('openSettingsBtn').onclick = () => modal.classList.remove('hidden');
     document.getElementById('closeModalBtn').onclick = () => modal.classList.add('hidden');
@@ -16,7 +15,6 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById('saveApiKeyBtn').onclick = saveKey;
 });
 
-// --- UI Actions ---
 function setInput(text) {
     document.getElementById("botInput").value = text;
     doSearch();
@@ -43,11 +41,11 @@ function togglePassword() {
     }
 }
 
-// --- API Key ---
 function loadKey() {
     const k = sessionStorage.getItem("alonbot_key");
     if (k) document.getElementById("apiKeyInput").value = k;
 }
+
 function saveKey() {
     const k = document.getElementById("apiKeyInput").value.trim();
     if (!k) { alert("יש להזין מפתח תחילה"); return; }
@@ -56,7 +54,6 @@ function saveKey() {
     showToast("המפתח נשמר בהצלחה!");
 }
 
-// --- Search Logic ---
 function base64ToBlobUrl(base64Data, contentType = 'application/pdf') {
     const byteCharacters = atob(base64Data);
     const byteArrays =[];
@@ -69,6 +66,17 @@ function base64ToBlobUrl(base64Data, contentType = 'application/pdf') {
     return URL.createObjectURL(new Blob(byteArrays, { type: contentType }));
 }
 
+function triggerDownload(blobUrl, filename) {
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = filename || "alon.pdf";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast("ההורדה החלה!");
+    addHist(filename, blobUrl);
+}
+
 async function doSearch() {
     const apiKey = document.getElementById("apiKeyInput").value.trim();
     const query = document.getElementById("botInput").value.trim();
@@ -79,7 +87,7 @@ async function doSearch() {
     }
     if (!query) return;
 
-    setStatus('loading', 'מנתח את בקשתך ומחפש במאגרי העלונים...');
+    setStatus('loading', 'מנתח את בקשתך, מחפש ומוודא תקינות (עלול לקחת כמה שניות)...');
     const btn = document.getElementById('actionBtn');
     btn.disabled = true;
 
@@ -91,30 +99,24 @@ async function doSearch() {
         });
         const data = await r.json();
 
-        if (data.success && data.pdf_b64) {
-            sessionStorage.setItem("alonbot_key", apiKey);
-            const blobUrl = base64ToBlobUrl(data.pdf_b64);
-            
-            // אוטומטית פותח את ההורדה
-            const link = document.createElement('a');
-            link.href = blobUrl;
-            link.download = data.filename || "alon.pdf";
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+        sessionStorage.setItem("alonbot_key", apiKey);
 
+        if (data.success && data.pdf_b64) {
+            // הכל נמצא רגיל
+            const blobUrl = base64ToBlobUrl(data.pdf_b64);
+            triggerDownload(blobUrl, data.filename);
             setStatus('success', data.message || "העלון נמצא בהצלחה וההורדה מתחילה!");
-            addHist(data.filename, blobUrl);
-            showToast("ההורדה החלה!");
+            
+        } else if (data.fallback && data.options && data.options.length > 0) {
+            // השרת מצא אלטרנטיבות והן כבר מוכנות להורדה!
+            setStatus('error', data.message);
+            showFallbackOptions(data.options);
         } else {
-            // טיפול חכם בשגיאות עם הצעות חלופיות!
-            setStatus('error', data.error || "לא מצאנו את העלון המבוקש.");
-            if (data.suggestions && data.suggestions.length > 0) {
-                showSuggestions(data.suggestions);
-            }
+            // לא מצא כלום (גם לא אלטרנטיבות)
+            setStatus('error', data.error || "לא מצאנו את העלון, וגם לא בארכיון.");
         }
     } catch (e) {
-        setStatus('error', "שגיאת תקשורת. בדוק את חיבור האינטרנט שלך.");
+        setStatus('error', "שגיאת תקשורת. השרת עמוס או שיש בעיית אינטרנט.");
     } finally {
         btn.disabled = false;
     }
@@ -125,11 +127,11 @@ function setStatus(type, msg) {
     const icon = document.getElementById('botIcon');
     const spinner = document.getElementById('loadingSpinner');
     const text = document.getElementById('botMessage');
-    const suggestions = document.getElementById('suggestionsArea');
+    const fallbackArea = document.getElementById('fallbackArea');
     
     box.classList.remove('hidden', 'error', 'success');
-    suggestions.classList.add('hidden');
-    suggestions.innerHTML = '';
+    fallbackArea.classList.add('hidden');
+    document.getElementById('fallbackButtons').innerHTML = '';
     
     if (type === 'loading') {
         icon.classList.add('hidden');
@@ -144,18 +146,25 @@ function setStatus(type, msg) {
     text.textContent = msg;
 }
 
-function showSuggestions(suggestionsArray) {
-    const container = document.getElementById('suggestionsArea');
-    container.innerHTML = '<span style="width:100%; font-size:0.85rem; color:var(--text-muted);">אולי התכוונת ל:</span>';
+function showFallbackOptions(options) {
+    const area = document.getElementById('fallbackArea');
+    const container = document.getElementById('fallbackButtons');
     
-    suggestionsArray.forEach(sug => {
-        const span = document.createElement('span');
-        span.className = 'tag suggestion-tag';
-        span.textContent = sug;
-        span.onclick = () => setInput(sug);
-        container.appendChild(span);
+    options.forEach(opt => {
+        const btn = document.createElement('button');
+        btn.className = 'primary-btn';
+        btn.style.fontSize = '0.9rem';
+        btn.style.padding = '10px 20px';
+        btn.innerHTML = `<i class="fas fa-download"></i> ${opt.title}`;
+        
+        btn.onclick = () => {
+            const blobUrl = base64ToBlobUrl(opt.pdf_b64);
+            triggerDownload(blobUrl, opt.filename);
+        };
+        container.appendChild(btn);
     });
-    container.classList.remove('hidden');
+    
+    area.classList.remove('hidden');
 }
 
 // --- History ---
@@ -189,7 +198,6 @@ function renderHist() {
         item.className = 'history-item';
         item.innerHTML = `<div><i class="fas fa-file-pdf"></i> ${h.name.replace('.pdf','')}</div> 
                           <span style="font-size:0.75rem; color:#888;">${h.date}</span>`;
-        // מאפשר הורדה חוזרת במידה וה-URL עדיין פעיל בסשן הנוכחי
         if (h.url) {
             item.onclick = () => {
                 const a = document.createElement('a'); a.href = h.url; a.download = h.name; a.click();
@@ -199,41 +207,30 @@ function renderHist() {
     });
 }
 
-// --- Particles Background Animation ---
 function initParticles() {
     const canvas = document.getElementById('particleCanvas');
     const ctx = canvas.getContext('2d');
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    
     let particles =[];
-    for(let i=0; i<80; i++) {
+    for(let i=0; i<60; i++) {
         particles.push({
-            x: Math.random() * canvas.width,
-            y: Math.random() * canvas.height,
-            vx: (Math.random() - 0.5) * 0.5,
-            vy: (Math.random() - 0.5) * 0.5,
+            x: Math.random() * canvas.width, y: Math.random() * canvas.height,
+            vx: (Math.random() - 0.5) * 0.5, vy: (Math.random() - 0.5) * 0.5,
             radius: Math.random() * 2 + 1
         });
     }
-
     function animate() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         particles.forEach(p => {
             p.x += p.vx; p.y += p.vy;
             if(p.x < 0 || p.x > canvas.width) p.vx *= -1;
             if(p.y < 0 || p.y > canvas.height) p.vy *= -1;
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-            ctx.fillStyle = 'rgba(0, 206, 201, 0.3)';
-            ctx.fill();
+            ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(0, 206, 201, 0.3)'; ctx.fill();
         });
         requestAnimationFrame(animate);
     }
     animate();
-    
-    window.addEventListener('resize', () => {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-    });
+    window.addEventListener('resize', () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; });
 }
