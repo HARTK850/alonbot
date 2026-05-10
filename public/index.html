@@ -39,12 +39,12 @@
                 <div class="search-wrapper">
                     <div class="input-group">
                         <i class="fas fa-search search-icon"></i>
-                        <input type="text" id="botInput" placeholder='נסה: "זרע שמשון", "עלון לילדים", "פניני הלכה שנה שעברה"' autocomplete="off" onkeydown="if(event.key==='Enter') doSearch()">
+                        <input type="text" id="botInput" placeholder='נסה: "קולדצקי", "עלון לילדים", "פניני הלכה משבוע שעבר"' autocomplete="off" onkeydown="if(event.key==='Enter') doSearch()">
                         <button id="actionBtn" class="primary-btn" onclick="doSearch()"><span>חפש</span> <i class="fas fa-magic"></i></button>
                     </div>
                     <div class="popular-tags">
                         <span class="tag" onclick="setInput('זרע שמשון')">זרע שמשון</span> 
-                        <span class="tag" onclick="setInput('קרוב אליך')">קרוב אליך</span>
+                        <span class="tag" onclick="setInput('קולדצקי')">קולדצקי</span>
                         <span class="tag" onclick="setInput('עלון מעניין לילדים')">עלון לילדים</span> 
                         <span class="tag" onclick="setInput('שבת בשבתו')">שבת בשבתו</span>
                     </div>
@@ -58,10 +58,15 @@
                         <div id="botIcon" class="status-icon"><i class="fas fa-info-circle"></i></div>
                         <p id="botMessage">מוכן לפעולה...</p>
                     </div>
-                    <!-- הוספתי כאן את אזור ההצעות החלופיות -->
-                    <div id="suggestionsArea" class="popular-tags hidden" style="margin-top: 15px; justify-content: flex-start;">
-                        <!-- כפתורי ההצעות יתווספו כאן דינמית -->
+                    
+                    <!-- אזור ההורדות החלופיות (אם העלון הרגיל לא נמצא) -->
+                    <div id="fallbackArea" class="hidden" style="margin-top: 15px;">
+                        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 10px;">אופציות זמינות להורדה:</p>
+                        <div id="fallbackButtons" style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end;">
+                            <!-- יתווספו כאן דינמית מהשרת -->
+                        </div>
                     </div>
+                    
                     <div id="progressTrack" class="progress-track hidden">
                         <div id="progressBar" class="progress-bar"></div>
                     </div>
