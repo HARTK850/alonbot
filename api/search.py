@@ -165,7 +165,7 @@ def clean_json_text(raw_text: str) -> str:
 def call_gemini_nlp(api_key: str, prompt: str) -> str:
     """
     קורא לג'מיני. מנסה קודם את המודל הקל, ואם הוא לא זמין או קורס, 
-    עובר מיד למודל ה-1.5-flash היציב כדי לא לאבד את בקשת המשתמש!
+    עובר מיד למודל ה-2.5-flash היציב כדי לא לאבד את בקשת המשתמש!
     (זה פותר את הקריסה שראית בלוגים).
     """
     genai.configure(api_key=api_key)
@@ -175,9 +175,9 @@ def call_gemini_nlp(api_key: str, prompt: str) -> str:
         resp = model.generate_content(prompt)
         return resp.text
     except Exception as e1:
-        log.warning("Primary NLP model failed (%s). Falling back to gemini-1.5-flash...", e1)
+        log.warning("Primary NLP model failed (%s). Falling back to gemini-2.5-flash...", e1)
         try:
-            fallback_model = genai.GenerativeModel("gemini-1.5-flash")
+            fallback_model = genai.GenerativeModel("gemini-2.5-flash")
             resp = fallback_model.generate_content(prompt)
             return resp.text
         except Exception as e2:
@@ -362,7 +362,7 @@ def gemini_validate_pdf(api_key: str, pdf_bytes: bytes, b: str, p: str, y: str) 
     """
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash") # משתמשים במודל היציב לבדיקות ה-PDF
+        model = genai.GenerativeModel("gemini-2.5-flash") # משתמשים במודל היציב לבדיקות ה-PDF
         
         sample_bytes = pdf_bytes[:2 * 1024 * 1024]
         b64_data = base64.b64encode(sample_bytes).decode()
