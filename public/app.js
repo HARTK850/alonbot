@@ -102,17 +102,14 @@ async function doSearch() {
         sessionStorage.setItem("alonbot_key", apiKey);
 
         if (data.success && data.pdf_b64) {
-            // הכל נמצא רגיל
             const blobUrl = base64ToBlobUrl(data.pdf_b64);
             triggerDownload(blobUrl, data.filename);
             setStatus('success', data.message || "העלון נמצא בהצלחה וההורדה מתחילה!");
             
         } else if (data.fallback && data.options && data.options.length > 0) {
-            // השרת מצא אלטרנטיבות והן כבר מוכנות להורדה!
             setStatus('error', data.message);
             showFallbackOptions(data.options);
         } else {
-            // לא מצא כלום (גם לא אלטרנטיבות)
             setStatus('error', data.error || "לא מצאנו את העלון, וגם לא בארכיון.");
         }
     } catch (e) {
@@ -167,26 +164,36 @@ function showFallbackOptions(options) {
     area.classList.remove('hidden');
 }
 
-// --- History ---
+// --- History (FIXED CRASH BUG) ---
 function loadHist() {
-    try { history = JSON.parse(localStorage.getItem(HIST_KEY) || "[]"); } catch { history =[]; }
+    try { 
+        history = JSON.parse(localStorage.getItem(HIST_KEY) || "[]");
+        // תיקון אוטומטי למקרה של היסטוריה פגומה מגרסאות קודמות
+        history = history.filter(h => h && (h.name || h.filename || h.bulletin));
+    } catch { 
+        history =[]; 
+    }
 }
+
 function addHist(filename, url) {
+    if (!filename) filename = "alon.pdf";
     history.unshift({ name: filename, url: url, date: new Date().toLocaleDateString('he-IL') });
     localStorage.setItem(HIST_KEY, JSON.stringify(history.slice(0, 20).map(h=>({...h, url:null}))));
     renderHist();
 }
+
 function clearHist() {
     history =[];
     localStorage.removeItem(HIST_KEY);
     renderHist();
 }
+
 function renderHist() {
     const list = document.getElementById("historyList");
     const clearBtn = document.getElementById("clearHistoryBtn");
     list.innerHTML = "";
     
-    if (!history.length) {
+    if (!history || !history.length) {
         list.innerHTML = '<div class="empty-history">אין היסטוריית הורדות</div>';
         clearBtn.classList.add('hidden');
         return;
@@ -194,13 +201,17 @@ function renderHist() {
     
     clearBtn.classList.remove('hidden');
     history.forEach(h => {
+        // משיג את שם העלון באופן בטוח, מתאים גם להיסטוריה מגרסה ישנה
+        const rawTitle = h.name || h.filename || h.bulletin || 'עלון';
+        const displayTitle = String(rawTitle).replace('.pdf', '').replace(/_/g, ' ');
+
         const item = document.createElement('div');
         item.className = 'history-item';
-        item.innerHTML = `<div><i class="fas fa-file-pdf"></i> ${h.name.replace('.pdf','')}</div> 
-                          <span style="font-size:0.75rem; color:#888;">${h.date}</span>`;
+        item.innerHTML = `<div><i class="fas fa-file-pdf"></i> ${displayTitle}</div> 
+                          <span style="font-size:0.75rem; color:#888;">${h.date || ''}</span>`;
         if (h.url) {
             item.onclick = () => {
-                const a = document.createElement('a'); a.href = h.url; a.download = h.name; a.click();
+                const a = document.createElement('a'); a.href = h.url; a.download = rawTitle; a.click();
             };
         }
         list.appendChild(item);
