@@ -118,39 +118,75 @@ def get_context_dates(d: date) -> dict:
 # ══════════════════════════════════════════════════════════════════
 def parse_user_intent(api_key: str, raw_query: str, ctx: dict) -> dict:
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-3.1-flash-lite", generation_config={"response_mime_type": "application/json"})
-    
-    prompt = f"""
-    אתה מנוע להבנת שפה טבעית עבור אפליקציית עלוני שבת.
-    זמן נוכחי: הפרשה השבוע היא {ctx['current_parasha']} שנת {ctx['current_year']}. הפרשה בשבוע שעבר הייתה {ctx['prev_parasha']}.
-    
-    המשתמש הקליד במילים שלו: "{raw_query}"
 
-    עליך לחלץ את הכוונה לקובץ JSON בלבד עם השדות הבאים:
-    1. "bulletin": שים לב!! אם המשתמש כתב תיאור כמו "עלון מעניין לילדים", אסור לך להחזיר "עלון מעניין לילדים". עליך לחשוב על שם של עלון *אמיתי* שמתאים, למשל "אותיות וילדים", "מטעמים לשולחן שבת" וכדומה. אם הוא כתב "קולדצקי", החזר "דברי שיח" או "שיח יצחק". החזר תמיד שם של עלון יהודי מוכר!
-    2. "parasha": שם הפרשה (ברירת מחדל: "{ctx['current_parasha']}". אם ביקש משבוע שעבר אז "{ctx['prev_parasha']}").
-    3. "parasha_en": הפרשה באנגלית.
-    4. "year": שנת ההוצאה (ברירת מחדל: "{ctx['current_year']}". אם אמר במפורש שנה שעברה, תן "{ctx['prev_year']}").
-    """
-    
-    try:
-        resp = model.generate_content(prompt)
-        parsed = json.loads(resp.text)
-        
-        if "bulletin" not in parsed: parsed["bulletin"] = raw_query
-        if "parasha" not in parsed: parsed["parasha"] = ctx["current_parasha"]
-        if "parasha_en" not in parsed: parsed["parasha_en"] = ctx["current_parasha_en"]
-        if "year" not in parsed: parsed["year"] = ctx["current_year"]
-            
-        return parsed
-    except Exception as e:
-        log.error("Intent parsing failed: %s", e)
-        return {
-            "bulletin": raw_query, 
-            "parasha": ctx["current_parasha"], 
-            "parasha_en": ctx["current_parasha_en"], 
-            "year": ctx["current_year"]
+    model = genai.GenerativeModel(
+        "gemini-3.1-flash-lite",
+        generation_config={
+            "temperature": 0,
+            "response_mime_type": "application/json"
         }
+    )
+
+    prompt = f"""
+החזר JSON תקין בלבד. בלי הסברים, בלי markdown, בלי ```.
+
+מבנה חובה:
+{{
+  "bulletin": "",
+  "parasha": "",
+  "parasha_en": "",
+  "year": ""
+}}
+
+זמן נוכחי:
+פרשה: {ctx['current_parasha']}
+שנה: {ctx['current_year']}
+שבוע קודם: {ctx['prev_parasha']}
+
+בקשת משתמש:
+{raw_query}
+
+כללים:
+1. bulletin = שם עלון אמיתי ומוכר.
+2. parasha = ברירת מחדל {ctx['current_parasha']}
+3. parasha_en = באנגלית
+4. year = ברירת מחדל {ctx['current_year']}
+"""
+
+    fallback = {
+        "bulletin": raw_query,
+        "parasha": ctx["current_parasha"],
+        "parasha_en": ctx["current_parasha_en"],
+        "year": ctx["current_year"]
+    }
+
+    for _ in range(2):   # שני ניסיונות
+        try:
+            resp = model.generate_content(prompt)
+            txt = resp.text.strip()
+
+            # ניקוי עטיפות מיותרות
+            txt = txt.replace("```json", "").replace("```", "").strip()
+
+            # חילוץ JSON אם יש טקסט מסביב
+            start = txt.find("{")
+            end = txt.rfind("}") + 1
+            if start >= 0 and end > start:
+                txt = txt[start:end]
+
+            parsed = json.loads(txt)
+
+            return {
+                "bulletin": parsed.get("bulletin", fallback["bulletin"]),
+                "parasha": parsed.get("parasha", fallback["parasha"]),
+                "parasha_en": parsed.get("parasha_en", fallback["parasha_en"]),
+                "year": parsed.get("year", fallback["year"])
+            }
+
+        except Exception as e:
+            log.warning("Intent parse retry failed: %s", e)
+
+    return fallback
 
 # ══════════════════════════════════════════════════════════════════
 # 3. מנועי חיפוש ושליפת קבצים (מותאם לקישורים עבריים בעייתיים)
