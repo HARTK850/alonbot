@@ -263,7 +263,11 @@ def search_duckduckgo(query: str) -> list[str]:
             timeout=10
         )
 
+        log.info("DDG STATUS: %s", r.status_code)
+        log.info("DDG LENGTH: %d", len(r.text))
+
         soup = BeautifulSoup(r.text, "lxml")
+
         urls = []
 
         for a in soup.select("a[href]"):
@@ -274,10 +278,10 @@ def search_duckduckgo(query: str) -> list[str]:
                 qs = urllib.parse.parse_qs(parsed.query)
                 href = qs.get("uddg", [""])[0]
 
-            href_low = href.lower()
-
-            if ".pdf" in href_low:
+            if ".pdf" in href.lower():
                 urls.append(href)
+
+        log.info("DDG PDF RESULTS: %d", len(urls))
 
         return list(dict.fromkeys(urls))[:8]
 
@@ -294,14 +298,19 @@ def search_bing(query: str) -> list[str]:
             timeout=10
         )
 
+        log.info("BING STATUS: %s", r.status_code)
+        log.info("BING LENGTH: %d", len(r.text))
+
         urls = re.findall(r'https?://[^\s"\']+', r.text)
 
         pdfs = [u for u in urls if ".pdf" in u.lower()]
 
+        log.info("BING PDF RESULTS: %d", len(pdfs))
+
         return list(dict.fromkeys(pdfs))[:8]
 
     except Exception as e:
-        log.warning("Bing failed: %s", e)
+        log.warning("BING failed: %s", e)
         return []
 
 def search_direct_sites(b: str, pe: str) -> list[str]:
