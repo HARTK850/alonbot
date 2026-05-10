@@ -1,16 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 POST /api/search
-body: { "api_key": "...", "bulletin": "..." }
-returns:
-  success=True  → { success, filename, parasha, hebrew_date, pdf_b64 }
-  success=False → { success, error }
+body: { "api_key": "...", "query": "..." }
 
-תיקונים בגרסה זו:
-  1. פרשת השבוע מחושבת מטבלה קשיחה (לא API חיצוני) – אמינה 100%
-  2. Gemini מאמת את תוכן ה-PDF (שם עלון + פרשה נכונה)
-  3. ה-PDF מוחזר כ-base64 בתוך ה-JSON – אין צורך ב-download.py נפרד
-     ולכן אין בעיית import בין Vercel functions
+תכונות בגרסה זו:
+  1. פרשת השבוע מחושבת מטבלה קשיחה (אמינה 100%).
+  2. שילוב מנוע NLP בעזרת Gemini - המשתמש יכול לכתוב "עלון לילדים לפרשת בראשית" והמערכת תבין לבד מה לחפש!
+  3. הצעות חלופיות (Fallback) - אם עלון לא יצא, המערכת מציעה את העלון של שבוע שעבר או שנה שעברה.
+  4. בדיקה מחמירה - שגיאת API בבדיקת ה-PDF מחזירה False ולא מאשרת בטעות עלון שגוי.
+  5. ה-PDF מוחזר כ-Base64 להורדה ישירה פנימית.
 """
 
 import base64, io, json, logging, re, urllib.parse
@@ -34,11 +32,8 @@ HEADERS = {
 }
 
 # ══════════════════════════════════════════════════════════════════
-# 1.  טבלה קשיחה של פרשיות תשפ"ו – תאריך השבת שבה קוראים
-#     (ישראל; מאוחד במקום שנפרדות)
+# 1. טבלה קשיחה של פרשיות
 # ══════════════════════════════════════════════════════════════════
-# key = תאריך השבת (yyyy-mm-dd)
-# value = (שם עברי, שם אנגלי, תאריך עברי)
 PARASHA_TABLE = {
     # תשרי–כסלו תשפ"ו
     "2025-10-04": ("האזינו",              "Haazinu",            "א' תשרי"),
@@ -73,7 +68,7 @@ PARASHA_TABLE = {
     "2026-04-18": ("שמיני",               "Shemini",            "כ\"א ניסן"),
     "2026-04-25": ("תזריע-מצורע",         "Tazria-Metzora",     "כ\"ח ניסן"),
     "2026-05-02": ("אחרי מות-קדושים",     "Achrei Mot-Kedoshim","ה' אייר"),
-    "2026-05-09": ("בהר-בחוקותי",         "Behar-Bechukotai",   "כ\"ב אייר"),  # ← היום!
+    "2026-05-09": ("בהר-בחוקותי",         "Behar-Bechukotai",   "כ\"ב אייר"),
     "2026-05-16": ("במדבר",               "Bamidbar",           "כ\"ט אייר"),
     "2026-05-23": ("נשא",                 "Nasso",              "ז' סיון"),
     "2026-05-30": ("בהעלותך",             "Beha'alotcha",       "י\"ד סיון"),
@@ -94,18 +89,10 @@ PARASHA_TABLE = {
     "2026-09-12": ("האזינו",              "Haazinu",            "א' תשרי תשפ\"ז"),
 }
 
-def get_parasha_for_date(d: date) -> dict:
-    """
-    מחזיר את הפרשה של השבת הקרובה (או השבת שעברה עד יום שבת).
-    מחפש בטבלה: השבת הקרובה מ-d ואילך (עד 6 ימים קדימה).
-    אם לא נמצא – מחזיר את הקרוב ביותר בטבלה.
-    """
-    # חפש את השבת הקרובה (כולל היום אם שבת)
-    # שבת = weekday() == 5
+def get_default_parasha(d: date) -> dict:
     days_until_shabbat = (5 - d.weekday()) % 7
     candidate = d + timedelta(days=days_until_shabbat)
 
-    # חפש בטבלה את התאריך הקרוב ביותר (±14 ימים)
     best_key   = None
     best_delta = 999
     for k in PARASHA_TABLE:
@@ -125,36 +112,63 @@ def get_parasha_for_date(d: date) -> dict:
     }
 
 # ══════════════════════════════════════════════════════════════════
-# 2.  Gemini: בניית שאילתות חיפוש ממוקדות
+# 2. הבנת שפה טבעית (NLP) – פענוח כוונת המשתמש
 # ══════════════════════════════════════════════════════════════════
-def build_queries(api_key: str, bulletin: str, ctx: dict) -> list[str]:
+def parse_user_intent(api_key: str, raw_query: str, default_ctx: dict) -> dict:
+    """
+    מקבל בקשה חופשית מהמשתמש ומחלץ את שם העלון, הפרשה והשנה.
+    """
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-3.1-flash-lite")
-    prompt = f"""אתה עוזר לחיפוש עלוני שבת עדכניים בפורמט PDF.
+    model = genai.GenerativeModel("gemini-3.1-flash-lite", generation_config={"response_mime_type": "application/json"})
+    
+    prompt = f"""
+    אתה עוזר למנוע חיפוש חכם של עלוני שבת.
+    פרשת השבוע הקרובה בברירת מחדל היא: "{default_ctx['parasha']}" (אנגלית: {default_ctx['parasha_en']}). השנה הנוכחית היא תשפ"ו (2026).
+    בקשת המשתמש החופשית: "{raw_query}"
 
-פרטי החיפוש:
-- שם העלון המדויק: "{bulletin}"
-- פרשת השבוע הקרובה (עברית): {ctx['parasha']}
-- פרשת השבוע הקרובה (אנגלית): {ctx['parasha_en']}
-- תאריך השבת: {ctx['shabbat_date']}
-- תאריך עברי: {ctx['hebrew_date']}
+    משימתך לנתח את הבקשה ולהחזיר קובץ JSON בלבד עם השדות הבאים:
+    1. "bulletin": שם העלון המדויק. אם המשתמש שאל בכלליות (למשל "עלון לילדים"), הצע שם של עלון פופולרי מתאים (למשל "אותיות וילדים" או "מטעמים לשולחן שבת"). אם ביקש "עלון הלכה", הצע למשל "פניני הלכה".
+    2. "parasha": שם הפרשה בעברית. אם המשתמש לא ציין פרשה ספציפית בבקשתו, השתמש בברירת המחדל שהיא "{default_ctx['parasha']}".
+    3. "parasha_en": שם הפרשה המקביל באנגלית. אם אינך יודע, תרגם פונטית.
+    4. "year": שנת ההוצאה (למשל "תשפ\"ו" או "תשפ\"ה"). אם המשתמש אמר "שנה שעברה" והשנה הנוכחית היא תשפ"ו, החזר "תשפ\"ה". אם לא אמר שום דבר על זמן, החזר "תשפ\"ו".
+    """
+    try:
+        resp = model.generate_content(prompt)
+        parsed = json.loads(resp.text)
+        
+        # וידוא שדות חובה למקרה של תקלה ב-JSON
+        if "bulletin" not in parsed: parsed["bulletin"] = raw_query
+        if "parasha" not in parsed: parsed["parasha"] = default_ctx["parasha"]
+        if "parasha_en" not in parsed: parsed["parasha_en"] = default_ctx["parasha_en"]
+        if "year" not in parsed: parsed["year"] = "תשפ\"ו"
+        
+        return parsed
+    except Exception as e:
+        log.error("Intent parsing failed: %s", e)
+        # Fallback בסיסי במקרה של שגיאה
+        return {
+            "bulletin": raw_query, 
+            "parasha": default_ctx["parasha"], 
+            "parasha_en": default_ctx["parasha_en"], 
+            "year": "תשפ\"ו"
+        }
 
-הפק בדיוק 7 שאילתות חיפוש שיובילו לקובץ PDF של הגליון הנוכחי של "{bulletin}".
-
-כללים:
-- כל שאילתה חייבת לכלול את שם הפרשה (עברית או אנגלית).
-- כל שאילתה חייבת לכלול את שם העלון המדויק "{bulletin}".
-- שלב גם: עלון שבת, PDF, גיליון, 2026, תשפו.
-- חלק מהשאילתות בעברית וחלק באנגלית.
-- כל שאילתה בשורה נפרדת בלבד, ללא מספור, ללא נקודות.
-"""
-    resp  = model.generate_content(prompt)
-    lines = [l.strip() for l in resp.text.splitlines() if l.strip()]
-    log.info("Gemini queries (%d): %s", len(lines), lines)
-    return lines[:7]
+def build_queries(parsed: dict) -> list[str]:
+    """בונה שאילתות חיפוש מדויקות לפי הפענוח של ג'מיני."""
+    b = parsed['bulletin']
+    p = parsed['parasha']
+    pe = parsed['parasha_en']
+    y = parsed['year']
+    
+    return[
+        f'"{b}" "{p}" {y} filetype:pdf',
+        f'עלון שבת "{b}" פרשת {p} {y} pdf',
+        f'"{b}" "{pe}" {y} pdf',
+        f'גליון "{b}" "{p}" {y}'
+    ]
 
 # ══════════════════════════════════════════════════════════════════
-# 3.  מנועי חיפוש (חינמיים)
+# 3. מנועי חיפוש (DuckDuckGo, Bing, אתרים ישירים)
 # ══════════════════════════════════════════════════════════════════
 def ddg_search(query: str) -> list[str]:
     try:
@@ -168,15 +182,13 @@ def ddg_search(query: str) -> list[str]:
         for a in soup.select("a[href]"):
             href = a.get("href", "")
             if "uddg=" in href:
-                href = urllib.parse.parse_qs(
-                    urllib.parse.urlparse(href).query
-                ).get("uddg", [""])[0]
+                href = urllib.parse.parse_qs(urllib.parse.urlparse(href).query).get("uddg", [""])[0]
             if href.lower().endswith(".pdf"):
                 urls.append(href)
-        return list(dict.fromkeys(urls))[:5]
+        return list(dict.fromkeys(urls))[:4]
     except Exception as e:
-        log.warning("DDG: %s", e)
-        return []
+        log.warning("DDG error: %s", e)
+        return[]
 
 def bing_search(query: str) -> list[str]:
     try:
@@ -186,92 +198,79 @@ def bing_search(query: str) -> list[str]:
             headers=HEADERS, timeout=12,
         )
         urls = re.findall(r'"(https?://[^"]+\.pdf)"', r.text)
-        return list(dict.fromkeys(urls))[:5]
+        return list(dict.fromkeys(urls))[:4]
     except Exception as e:
-        log.warning("Bing: %s", e)
+        log.warning("Bing error: %s", e)
         return []
 
-def direct_site_search(bulletin: str, ctx: dict) -> list[str]:
-    p  = urllib.parse.quote(ctx["parasha_en"])
-    bl = urllib.parse.quote(bulletin)
-    sites = [
+def direct_site_search(parsed: dict) -> list[str]:
+    p = urllib.parse.quote(parsed["parasha_en"])
+    bl = urllib.parse.quote(parsed["bulletin"])
+    sites =[
         f"https://www.yeshiva.org.il/search?q={bl}+{p}&type=pdf",
         f"https://www.toraland.org.il/search?s={bl}+{p}",
         f"https://www.kipa.co.il/?s={bl}+{p}+pdf",
     ]
-    urls = []
+    urls =[]
     for site in sites:
         try:
             r = requests.get(site, headers=HEADERS, timeout=10)
-            urls.extend(re.findall(r'"(https?://[^"]+\.pdf)"', r.text)[:3])
+            urls.extend(re.findall(r'"(https?://[^"]+\.pdf)"', r.text)[:2])
         except Exception:
             pass
-    return list(dict.fromkeys(urls))[:6]
+    return list(dict.fromkeys(urls))[:4]
 
 # ══════════════════════════════════════════════════════════════════
-# 4.  הורדה + ולידציה בסיסית (magic bytes)
+# 4. הורדה ואימות (Magic Bytes)
 # ══════════════════════════════════════════════════════════════════
 PDF_MAGIC = b"%PDF"
 MAX_SIZE  = 15 * 1024 * 1024  # 15 MB
 
 def fetch_pdf_bytes(url: str) -> bytes | None:
-    """מוריד PDF ומחזיר את ה-bytes, או None אם לא תקין."""
+    """מוריד PDF ומחזיר bytes. מוודא שמדובר ב-PDF אמיתי."""
     try:
-        # HEAD check
         head = requests.head(url, headers=HEADERS, timeout=8, allow_redirects=True)
         if head.status_code != 200:
             return None
         ct = head.headers.get("Content-Type", "").lower()
-        cl = int(head.headers.get("Content-Length", 0) or 0)
         if "pdf" not in ct and not url.lower().endswith(".pdf"):
             return None
-        if cl and cl < 5_000:
-            return None
 
-        # GET
-        r   = requests.get(url, headers=HEADERS, timeout=25, stream=True)
+        r = requests.get(url, headers=HEADERS, timeout=25, stream=True)
         buf = io.BytesIO()
         for chunk in r.iter_content(8192):
             buf.write(chunk)
             if buf.tell() > MAX_SIZE:
-                log.warning("PDF too large: %s", url)
                 return None
+        
         data = buf.getvalue()
         if not data.startswith(PDF_MAGIC):
             return None
-        if len(data) < 5_000:
+        if len(data) < 5000:
             return None
         return data
     except Exception as e:
-        log.warning("fetch_pdf_bytes %s: %s", url, e)
+        log.warning("fetch_pdf_bytes failed for %s: %s", url, e)
         return None
 
 # ══════════════════════════════════════════════════════════════════
-# 5.  Gemini: ולידציה של תוכן ה-PDF
+# 5. ולידציה של תוכן ה-PDF באמצעות Gemini (מחמיר!)
 # ══════════════════════════════════════════════════════════════════
-# ══════════════════════════════════════════════════════════════════
-# 5.  Gemini: ולידציה של תוכן ה-PDF
-# ══════════════════════════════════════════════════════════════════
-def gemini_validate_pdf(api_key: str, pdf_bytes: bytes,
-                         bulletin: str, ctx: dict) -> bool:
-    """
-    שולח את ה-PDF ל-Gemini ומבקש ממנו לאשר.
-    תיקון: אם קורית שגיאה (Exception) מחזירים False, כדי לא לתת בטעות עלון שגוי!
-    """
+def gemini_validate_pdf(api_key: str, pdf_bytes: bytes, parsed: dict) -> bool:
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel("gemini-3.1-flash-lite")
 
-        # מגביל ל-3MB כדי לא לחרוג מ-token limit
+        # שימוש בדגימה כדי לחסוך טוקנים
         sample = pdf_bytes[:3 * 1024 * 1024]
         b64    = base64.b64encode(sample).decode()
 
         prompt = f"""בדוק את קובץ ה-PDF המצורף וענה אך ורק YES או NO.
 
-שאלה: האם קובץ זה הוא בהכרח ובוודאות הגליון/עלון של "{bulletin}" שעוסק בפרשת השבוע "{ctx['parasha']}" (באנגלית: {ctx['parasha_en']})?
+שאלה: האם קובץ זה הוא בהכרח ובוודאות הגליון/עלון של "{parsed['bulletin']}" שעוסק בפרשת השבוע "{parsed['parasha']}"?
 
 כללים חמורים:
-- ענה YES רק אם גם שם העלון המדויק ("{bulletin}") וגם שם הפרשה ("{ctx['parasha']}") מופיעים בקובץ.
+- ענה YES רק אם גם שם העלון המדויק ("{parsed['bulletin']}") וגם שם הפרשה ("{parsed['parasha']}") מופיעים בקובץ באופן ברור.
 - אם מדובר בעלון אחר לגמרי או שם דומה אך לא זהה - ענה NO.
 - אם הפרשה לא מוזכרת בקובץ – ענה NO.
 - אם אינך בטוח ב-100% – ענה NO.
@@ -282,67 +281,58 @@ def gemini_validate_pdf(api_key: str, pdf_bytes: bytes,
             prompt,
         ])
         answer = resp.text.strip().upper()
-        log.info("Gemini validation answer for '%s': '%s'", bulletin, answer)
+        log.info("Gemini validation answer for '%s': '%s'", parsed['bulletin'], answer)
         return answer.startswith("YES")
     except Exception as e:
         log.warning("Gemini validation error: %s", e)
-        # תיקון קריטי: אם יש שגיאה ב-API של ג'מיני, אנחנו פוסלים את הקובץ.
-        # הקוד הקודם החזיר True ואישר למעשה עלונים אקראיים כשהייתה שגיאת תקשורת.
+        # תיקון קריטי: אם יש שגיאה, דוחים את הקובץ כדי למנוע זבל
         return False
 
 # ══════════════════════════════════════════════════════════════════
-# 6.  לוגיקה ראשית
+# 6. לוגיקה ראשית
 # ══════════════════════════════════════════════════════════════════
-def find_bulletin_pdf(api_key: str, bulletin: str):
-    """
-    מחזיר (pdf_bytes, filename, ctx) אם נמצא, אחרת (None, None, ctx).
-    """
+def find_bulletin_pdf(api_key: str, raw_query: str):
     from datetime import datetime, timezone
     today = datetime.now(timezone.utc).date()
-    ctx   = get_parasha_for_date(today)
-    log.info("Context: %s", ctx)
+    default_ctx = get_default_parasha(today)
+    
+    # שלב 1: הבנת כוונת המשתמש
+    parsed = parse_user_intent(api_key, raw_query, default_ctx)
+    log.info("Parsed intent: %s", parsed)
 
-    queries = build_queries(api_key, bulletin, ctx)
-
-    # איסוף מועמדים
-    candidates: list[str] = []
+    # שלב 2: איסוף מועמדים
+    queries = build_queries(parsed)
+    candidates =[]
     for q in queries:
         candidates += ddg_search(q)
         candidates += bing_search(q)
-    candidates += direct_site_search(bulletin, ctx)
+    candidates += direct_site_search(parsed)
 
-    # ביטול כפילויות
-    seen, unique = set(), []
-    for u in candidates:
-        if u not in seen:
-            seen.add(u); unique.append(u)
+    unique = list(dict.fromkeys(candidates))
     log.info("Total unique candidates: %d", len(unique))
 
+    # שלב 3: בדיקת הקבצים
     for url in unique:
         log.info("Trying: %s", url)
         pdf_bytes = fetch_pdf_bytes(url)
         if not pdf_bytes:
             continue
 
-        # ולידציה עם Gemini
-        if not gemini_validate_pdf(api_key, pdf_bytes, bulletin, ctx):
+        if not gemini_validate_pdf(api_key, pdf_bytes, parsed):
             log.info("Gemini rejected: %s", url)
             continue
 
-        # שם קובץ נקי
-        raw  = urllib.parse.unquote(url.split("/")[-1].split("?")[0])
-        safe = re.sub(r"[^\w\u0590-\u05ff._-]", "_", raw)
-        if not safe.lower().endswith(".pdf"):
-            safe = f"{bulletin}_{ctx['parasha_en']}.pdf"
-        safe = safe[:80]
+        # יצירת שם קובץ בטוח ונקי להורדה
+        safe_name = f"{parsed['bulletin']}_{parsed['parasha_en']}_{parsed['year']}.pdf"
+        safe_name = re.sub(r'[\\/*?:"<>|]', "", safe_name).replace(' ', '_')
 
-        log.info("Accepted: %s (%d bytes)", url, len(pdf_bytes))
-        return pdf_bytes, safe, ctx
+        log.info("Accepted: %s", url)
+        return pdf_bytes, safe_name, parsed
 
-    return None, None, ctx
+    return None, None, parsed
 
 # ══════════════════════════════════════════════════════════════════
-# 7.  Vercel handler
+# 7. Vercel Handler
 # ══════════════════════════════════════════════════════════════════
 class handler(BaseHTTPRequestHandler):
 
@@ -355,46 +345,55 @@ class handler(BaseHTTPRequestHandler):
         self.send_response(200); self._cors(); self.end_headers()
 
     def do_POST(self):
-        length   = int(self.headers.get("Content-Length", 0))
+        length = int(self.headers.get("Content-Length", 0))
         raw_body = self.rfile.read(length)
         try:
             body = json.loads(raw_body)
         except Exception:
             return self._json(400, {"success": False, "error": "JSON לא תקין"})
 
-        api_key  = (body.get("api_key")  or "").strip()
-        bulletin = (body.get("bulletin") or "").strip()
+        api_key = (body.get("api_key") or "").strip()
+        query = (body.get("query") or "").strip()
 
         if not api_key:
-            return self._json(400, {"success": False, "error": "נא להזין Gemini API Key"})
-        if not bulletin:
-            return self._json(400, {"success": False, "error": "נא להזין שם עלון"})
+            return self._json(400, {"success": False, "error": "נא להזין מפתח API בהגדרות"})
+        if not query:
+            return self._json(400, {"success": False, "error": "נא להזין מה לחפש (שם עלון)"})
 
         try:
-            pdf_bytes, filename, ctx = find_bulletin_pdf(api_key, bulletin)
+            pdf_bytes, filename, parsed = find_bulletin_pdf(api_key, query)
         except Exception as e:
             log.exception("find_bulletin_pdf crashed")
-            return self._json(500, {"success": False, "error": f"שגיאת שרת: {e}"})
+            return self._json(500, {"success": False, "error": f"שגיאת שרת פנימית: {e}"})
 
+        # אם העלון לא נמצא, נייצר הצעות חלופיות למשתמש!
         if not pdf_bytes:
+            from datetime import datetime, timezone
+            today = datetime.now(timezone.utc).date()
+            prev_week = get_default_parasha(today - timedelta(days=7))
+            
+            b_name = parsed['bulletin']
+            p_name = parsed['parasha']
+            
+            # בניית רשימת הצעות (שבוע שעבר / שנה שעברה)
+            suggestions =[
+                f"{b_name} לפרשת {prev_week['parasha']} (שבוע שעבר)",
+                f"{b_name} לפרשת {p_name} שנה שעברה"
+            ]
+            
             return self._json(404, {
                 "success": False,
-                "error": (
-                    f"לא נמצא גליון של \"{bulletin}\" לפרשת {ctx.get('parasha','השבוע')}. "
-                    "נסה שם מדויק יותר."
-                ),
+                "error": f"נראה שהעלון '{b_name}' לפרשת {p_name} עדיין לא יצא.",
+                "suggestions": suggestions
             })
 
-        # המרה ל-base64 – ה-frontend יוריד ישירות
+        # העלון נמצא - נמיר ל-Base64 ונחזיר לדפדפן
         b64 = base64.b64encode(pdf_bytes).decode()
 
         self._json(200, {
             "success":     True,
             "filename":    filename,
-            "parasha":     ctx["parasha"],
-            "parasha_en":  ctx["parasha_en"],
-            "hebrew_date": ctx["hebrew_date"],
-            "message":     f"נמצא גליון של \"{bulletin}\" לפרשת {ctx['parasha']}!",
+            "message":     f"מעולה! מצאתי את '{parsed['bulletin']}' לפרשת {parsed['parasha']}.",
             "pdf_b64":     b64,
         })
 
