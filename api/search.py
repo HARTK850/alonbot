@@ -255,46 +255,54 @@ def build_search_queries(b: str, p: str, pe: str, y: str) -> list[str]:
     ]
 
 def search_duckduckgo(query: str) -> list[str]:
-    """חיפוש ב-DuckDuckGo דרך HTML Scraping"""
     try:
         r = requests.get(
-            "https://html.duckduckgo.com/html/", 
-            params={"q": query}, 
-            headers=HEADERS, 
+            "https://html.duckduckgo.com/html/",
+            params={"q": query},
+            headers=HEADERS,
             timeout=10
         )
+
         soup = BeautifulSoup(r.text, "lxml")
-        urls =[]
+        urls = []
+
         for a in soup.select("a[href]"):
             href = a.get("href", "")
-            if "uddg=" in href: 
-                parsed_url = urllib.parse.urlparse(href)
-                query_params = urllib.parse.parse_qs(parsed_url.query)
-                href = query_params.get("uddg", [""])[0]
-                
-            if href.lower().endswith(".pdf"): 
+
+            if "uddg=" in href:
+                parsed = urllib.parse.urlparse(href)
+                qs = urllib.parse.parse_qs(parsed.query)
+                href = qs.get("uddg", [""])[0]
+
+            href_low = href.lower()
+
+            if ".pdf" in href_low:
                 urls.append(href)
-                
-        return urls[:4]
+
+        return list(dict.fromkeys(urls))[:8]
+
     except Exception as e:
-        log.warning("DuckDuckGo fetch failed: %s", e)
-        return[]
+        log.warning("DDG failed: %s", e)
+        return []
 
 def search_bing(query: str) -> list[str]:
-    """חיפוש ב-Bing לאיתור קבצי PDF"""
     try:
         r = requests.get(
-            "https://www.bing.com/search", 
-            params={"q": query + " filetype:pdf"}, 
-            headers=HEADERS, 
-            timeout=8
+            "https://www.bing.com/search",
+            params={"q": query},
+            headers=HEADERS,
+            timeout=10
         )
-        urls = re.findall(r'"(https?://[^"]+\.pdf)"', r.text)
-        unique_urls = list(dict.fromkeys(urls))
-        return unique_urls[:4]
+
+        urls = re.findall(r'https?://[^\s"\']+', r.text)
+
+        pdfs = [u for u in urls if ".pdf" in u.lower()]
+
+        return list(dict.fromkeys(pdfs))[:8]
+
     except Exception as e:
-        log.warning("Bing fetch failed: %s", e)
-        return[]
+        log.warning("Bing failed: %s", e)
+        return []
 
 def search_direct_sites(b: str, pe: str) -> list[str]:
     """
@@ -402,27 +410,87 @@ def gemini_validate_pdf(api_key: str, pdf_bytes: bytes, b: str, p: str, y: str) 
 # ══════════════════════════════════════════════════════════════════
 def search_single_target(api_key: str, b: str, p: str, pe: str, y: str):
     """
-    הפונקציה מבצעת את מעגל החיפוש השלם עבור יעד אחד ספציפי.
+    חיפוש דו-שלבי חכם:
+    1. חיפוש רגיל
+    2. אם לא נמצא - משתמש במה שכן נמצא כדי לנסח חיפוש טוב יותר
     """
+
+    # =========================
+    # שלב ראשון - רגיל
+    # =========================
     queries = build_search_queries(b, p, pe, y)
-    candidates =[]
-    
-    for q in queries: 
+    candidates = []
+
+    for q in queries:
         candidates += search_duckduckgo(q)
         candidates += search_bing(q)
-        
-    candidates += search_direct_sites(b, pe)
-    
-    unique_urls = list(dict.fromkeys(candidates))
-    log.info("Found %d unique URL candidates for %s %s", len(unique_urls), b, p)
 
+    candidates += search_direct_sites(b, pe)
+
+    unique_urls = list(dict.fromkeys(candidates))
+    log.info("First search found %d candidates for %s %s", len(unique_urls), b, p)
+
+    # ניסיון הורדה
     for url in unique_urls:
         pdf_data = download_pdf_bytes(url)
         if pdf_data and gemini_validate_pdf(api_key, pdf_data, b, p, y):
-            safe_name = f"{b}_{pe}_{y}.pdf".replace('"', "").replace(' ', '_')
+            safe_name = f"{b}_{pe}_{y}.pdf".replace('"', "").replace(" ", "_")
             return pdf_data, safe_name
-            
+
+    # =========================
+    # שלב שני - חיפוש חכם
+    # =========================
+    log.info("Primary search failed. Starting smart retry...")
+
+    smart_queries = build_smart_retry_queries(b, p, pe, y, unique_urls)
+
+    second_candidates = []
+
+    for q in smart_queries:
+        second_candidates += search_duckduckgo(q)
+        second_candidates += search_bing(q)
+
+    second_urls = list(dict.fromkeys(second_candidates))
+    log.info("Smart retry found %d candidates", len(second_urls))
+
+    for url in second_urls:
+        pdf_data = download_pdf_bytes(url)
+        if pdf_data and gemini_validate_pdf(api_key, pdf_data, b, p, y):
+            safe_name = f"{b}_{pe}_{y}.pdf".replace('"', "").replace(" ", "_")
+            return pdf_data, safe_name
+
     return None, None
+
+def build_smart_retry_queries(b: str, p: str, pe: str, y: str, found_urls: list[str]) -> list[str]:
+    """
+    אם חיפוש ראשון נכשל -
+    משתמש במה שמצא כדי לייצר חיפוש חכם יותר
+    """
+
+    words = set()
+
+    for url in found_urls:
+        parts = re.split(r'[/_\-.?=&]+', url)
+
+        for part in parts:
+            part = part.strip()
+
+            if len(part) >= 3:
+                words.add(part)
+
+    extra = " ".join(list(words)[:6])
+
+    queries = [
+        f'"{b}" pdf',
+        f'"{b}" "{p}" pdf',
+        f'"{b}" "{pe}" pdf',
+        f'{b} {p} filetype:pdf',
+        f'{b} {extra} pdf',
+        f'"{b}" עלון שבת pdf',
+        f'"{b}" פרשת {p}',
+    ]
+
+    return list(dict.fromkeys(queries))
 
 def find_bulletin_logic(api_key: str, raw_query: str):
     """
