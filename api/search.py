@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-AlonBot - Smart Shabbat Bulletin Search API
+AlonBot - Smart Shabbat Bulletin Search API (Haredi Edition)
 ================================================================================
 POST /api/search
 body: { "api_key": "...", "query": "..." }
 
-תכונות המערכת בגרסה זו (חסינה לשגיאות):
-1. תיקון שגיאות 404 ו-501: השרת תמיד יחזיר סטטוס 200, ויש לו מענה לבקשות GET.
-2. מנוע הבנת שפה (NLP) מוגן קריסות: גם אם ג'מיני מתבלבל במבנה, הקוד יודע לתקן אותו.
-   אם מודל ה-Lite נכשל, הוא עובר מיד למודל ה-Flash היציב כדי לא לאבד את בקשת המשתמש!
-3. אימות תוכן ה-PDF: מונע החזרת עלונים משנים קודמות.
-4. חיפוש באתרי יהדות נוספים שהוחזרו למערכת להגדלת מאגר העלונים.
-5. מנגנון Fallback אקטיבי מרובה תהליכים (מציאת אלטרנטיבות בזמן אמת).
+מה חדש בגרסה זו?
+1. מותאם למגזר החרדי בלבד! מנוע ה-NLP עבר אופטימיזציה לספק רק עלונים מהמגזר 
+   (למשל: יציע "נפלאות" לילדים במקום "אותיות וילדים", "באר הפרשה" במקום עלונים דל"י).
+2. תיקון אפס תוצאות (0 Links): המעבר ממנוע החיפוש DuckDuckGo הרגיל שנחסם
+   למנועי DuckDuckGo Lite, Yahoo Search ו-Bing, שמביאים תוצאות אמת ללא חסימות בוטים.
+3. חיפוש יעודי בארכיונים חרדיים: חיפוש ממוקד ב-Beinenu וב-Dirshu.
+4. Fallback אקטיבי מרובה תהליכים: ממשיך לחפש את השבוע שעבר ושנה שעברה במקביל.
 ================================================================================
 """
 
@@ -31,7 +31,7 @@ from bs4 import BeautifulSoup
 import google.generativeai as genai
 
 # ══════════════════════════════════════════════════════════════════
-# הגדרות לוגים מתקדמות לבקרה על השרת
+# הגדרות מערכת ולוגים
 # ══════════════════════════════════════════════════════════════════
 logging.basicConfig(
     level=logging.INFO,
@@ -40,9 +40,6 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# ══════════════════════════════════════════════════════════════════
-# קבועים (Constants) - הגדרות חיפוש ותקשורת
-# ══════════════════════════════════════════════════════════════════
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -52,12 +49,12 @@ HEADERS = {
     "Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8",
 }
 
-MAX_FILE_SIZE = 12 * 1024 * 1024  # 12 MB - מגבלת גודל לקובץ PDF
-MIN_FILE_SIZE = 5000              # 5 KB - קובץ קטן מזה הוא כנראה שגיאה או דף ריק
-PDF_MAGIC_BYTES = b"%PDF"         # החתימה הדיגיטלית של כל קובץ PDF חוקי
+MAX_FILE_SIZE = 12 * 1024 * 1024  # מגבלת 12 מגה-בייט ל-PDF (למניעת קריסות שרת)
+MIN_FILE_SIZE = 5000              # קובץ קטן מ-5KB אינו PDF אמיתי
+PDF_MAGIC_BYTES = b"%PDF"         # בדיקת קסם - כל קובץ PDF חייב להתחיל בתווים אלו
 
 # ══════════════════════════════════════════════════════════════════
-# טבלת פרשיות קשיחה ומלאה
+# טבלת פרשיות קשיחה - למניעת תלות ב-API חיצונים לזמני כניסת שבת
 # ══════════════════════════════════════════════════════════════════
 PARASHA_TABLE =[
     ("2025-10-25", "בראשית", "Bereshit"),
@@ -108,11 +105,10 @@ PARASHA_TABLE =[
     ("2026-09-05", "ניצבים-וילך", "Nitzavim-Vayeilech")
 ]
 
-
 def get_context_dates(d: date) -> dict:
     """
-    מחשב את הפרשה של השבוע הנוכחי ואת הפרשה של שבוע שעבר.
-    כך המערכת יכולה להבין כשהמשתמש כותב לה "משבוע שעבר".
+    מחשב את פרשת השבוע הנוכחי ופרשת שבוע שעבר.
+    חשוב מאד להבנת המשתמש כאשר הוא מבקש "עלון של שבוע שעבר".
     """
     days_until_shabbat = (5 - d.weekday()) % 7
     current_shabbat = d + timedelta(days=days_until_shabbat)
@@ -130,8 +126,7 @@ def get_context_dates(d: date) -> dict:
     curr = PARASHA_TABLE[idx]
     prev = PARASHA_TABLE[idx-1] if idx > 0 else curr
     
-    # שימו לב: השנים מוחזרות ללא גרשיים (תשפו במקום תשפ"ו)
-    # כדי למנוע שגיאות JSON Parsing שעלולות לקרוס בגלל גרשיים כפולים.
+    # מוחזר ללא גרשיים (תשפו במקום תשפ"ו) כדי למנוע קריסות בפענוח JSON
     return {
         "current_parasha": curr[1],
         "current_parasha_en": curr[2],
@@ -141,11 +136,10 @@ def get_context_dates(d: date) -> dict:
         "prev_year": "תשפה"
     }
 
-
 def clean_json_text(raw_text: str) -> str:
     """
-    פונקציית הגנה קריטית: מנקה את התשובה של ג'מיני כדי למנוע שגיאות.
-    מוריד שאריות קוד (כמו ```json) שאותן מודלי בינה מלאכותית נוטים להוסיף.
+    מנקה את התשובה של ג'מיני כדי למנוע שגיאות פענוח JSON.
+    מודלי שפה נוטים להוסיף '```json' בהתחלה וזה מרסק את הקוד.
     """
     text = raw_text.strip()
     if text.startswith("```json"):
@@ -160,17 +154,14 @@ def clean_json_text(raw_text: str) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════
-# NLP Engine - הבנת שפה טבעית חסינה משגיאות
+# NLP Engine - הבנת שפה טבעית (מותאם למגזר החרדי)
 # ══════════════════════════════════════════════════════════════════
 def call_gemini_nlp(api_key: str, prompt: str) -> str:
     """
-    קורא לג'מיני. מנסה קודם את המודל הקל, ואם הוא לא זמין או קורס, 
-    עובר מיד למודל ה-1.5-flash היציב כדי לא לאבד את בקשת המשתמש!
-    (זה פותר את הקריסה שראית בלוגים).
+    קורא לג'מיני. במידה והמודל הקל נכשל, עובר אוטומטית למודל החזק.
     """
     genai.configure(api_key=api_key)
     try:
-        # מנסים ללא mime_type מגביל
         model = genai.GenerativeModel("gemini-3.1-flash-lite")
         resp = model.generate_content(prompt)
         return resp.text
@@ -187,13 +178,11 @@ def call_gemini_nlp(api_key: str, prompt: str) -> str:
 
 def parse_user_intent(api_key: str, raw_query: str, ctx: dict) -> dict:
     """
-    המוח מאחורי הבנת השפה הטבעית:
-    מנתח טקסט חופשי (כמו "עלון לילדים לפרשת נח") ומחלץ ממנו
-    במדויק את שם העלון האמיתי, שם הפרשה, והשנה!
+    מנתח טקסט חופשי (כמו "עלון לילדים") ומחלץ שם עלון אמיתי **מהמגזר החרדי**.
     """
     prompt = f"""
-    אתה מנוע להבנת שפה טבעית עבור מערכת חיפוש עלוני שבת יהודיים.
-    המטרה שלך היא לתרגם את הבקשה החופשית של המשתמש לשאילתת חיפוש מדויקת.
+    אתה מנוע חיפוש חכם המיועד **אך ורק למגזר החרדי**.
+    המטרה שלך היא לתרגם את הבקשה החופשית של המשתמש לשאילתת חיפוש מדויקת של עלון שבת חרדי.
     
     נתונים עדכניים:
     - הפרשה של השבוע: {ctx['current_parasha']}. השנה הנוכחית: {ctx['current_year']}.
@@ -201,16 +190,18 @@ def parse_user_intent(api_key: str, raw_query: str, ctx: dict) -> dict:
     
     המשתמש הקליד במילים שלו: "{raw_query}"
 
-    עליך להחזיר אך ורק אובייקט JSON חוקי ותקין עם השדות הבאים בדיוק:
-    1. "bulletin": שים לב!! אם המשתמש כתב מונח כללי כמו "עלון מעניין לילדים", "משהו לילדים" או "לילדים", אסור לך להחזיר "עלון מעניין לילדים"! חובה עליך להמיר זאת לשם של עלון ילדים אמיתי ומוכר כגון "אותיות וילדים", "מטעמים לשולחן שבת", או "ילדים תורניים".
-       אם הוא אמר "קולדצקי" או "הרב קולדצקי", המר זאת לעלון: "דברי שיח".
-       אם הוא אמר "עלון הלכה", המר זאת ל-"פניני הלכה" או "הלכה למעשה".
-       החזר תמיד רק את שם העלון המדויק!
-    2. "parasha": שם הפרשה בעברית. (ברירת מחדל: "{ctx['current_parasha']}". אם ביקש במפורש על שבוע שעבר, החזר "{ctx['prev_parasha']}").
+    עליך להחזיר אובייקט JSON חוקי ותקין עם השדות הבאים בדיוק:
+    1. "bulletin": שם העלון המדויק. 
+       - אם המשתמש מחפש "עלון לילדים" או "לילדים", **אסור** להציע עלונים דתיים-לאומיים כמו "אותיות וילדים". עליך להמיר זאת לשם עלון ילדים חרדי כמו: "נפלאות", "סיפורי צדיקים", "מרוה לצמא", "זרע שמשון לילדים", "הבאר".
+       - אם המשתמש מחפש "עלון מעניין" או "משהו לקרוא", הצע: "באר הפרשה" (בידרמן), "דברי שיח" (קולדצקי), "השגחה פרטית", או "לקראת שבת".
+       - אם הוא אמר "קולדצקי", החזר: "דברי שיח".
+       - אם אמר "בידרמן", החזר: "באר הפרשה".
+       החזר תמיד רק את שם העלון!
+    2. "parasha": שם הפרשה בעברית. (ברירת מחדל: "{ctx['current_parasha']}". אם ביקש משבוע שעבר, החזר "{ctx['prev_parasha']}").
     3. "parasha_en": הפרשה באנגלית. (ברירת מחדל: "{ctx['current_parasha_en']}").
-    4. "year": שנת ההוצאה ללא גרשיים כלל! (למשל: תשפו ולא תשפ"ו). 
+    4. "year": שנת ההוצאה ללא גרשיים כלל! (חובה להחזיר למשל: תשפו ולא תשפ"ו). 
     
-    החזר אך ורק פורמט JSON.
+    החזר אך ורק פורמט JSON. אל תוסיף אף מילה מעבר לזה.
     """
     
     try:
@@ -218,7 +209,7 @@ def parse_user_intent(api_key: str, raw_query: str, ctx: dict) -> dict:
         clean_text = clean_json_text(raw_resp)
         parsed = json.loads(clean_text)
         
-        # השלמת חוסרים במקרה שהמודל "שכח" משהו
+        # השלמת חוסרים
         if "bulletin" not in parsed: parsed["bulletin"] = raw_query
         if "parasha" not in parsed: parsed["parasha"] = ctx["current_parasha"]
         if "parasha_en" not in parsed: parsed["parasha_en"] = ctx["current_parasha_en"]
@@ -228,8 +219,8 @@ def parse_user_intent(api_key: str, raw_query: str, ctx: dict) -> dict:
         return parsed
         
     except Exception as e:
-        log.error("NLP Intent Parsing Failed completely: %s. Using raw query as fallback.", e)
-        # Fallback בטוח: אם יש קריסה כלשהי, נחזיר את הנתונים כפי שהם כדי לא למנוע חיפוש
+        log.error("NLP Intent Parsing Failed: %s. Using raw query as fallback.", e)
+        # במקרה חירום של קריסת ה-JSON, חוזרים לבקשה המקורית של המשתמש
         return {
             "bulletin": raw_query, 
             "parasha": ctx["current_parasha"], 
@@ -239,13 +230,10 @@ def parse_user_intent(api_key: str, raw_query: str, ctx: dict) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════
-# מנועי חיפוש מקוונים (Scraping)
+# מנועי חיפוש מקוונים (מנצחים חסימות של רשתות)
 # ══════════════════════════════════════════════════════════════════
 def build_search_queries(b: str, p: str, pe: str, y: str) -> list[str]:
-    """
-    יוצר וריאציות של שאילתות כדי למקסם את הסיכוי למצוא את הקובץ.
-    מסיר את הגרשיים מהשנה כדי שקישורים לא יישברו במנועי חיפוש מסוימים.
-    """
+    """יוצר שאילתות מדויקות לאיתור ה-PDF (מנקה גרשיים שמפריעים ל-URL)"""
     safe_y = y.replace('"', '').replace("'", "")
     
     return[
@@ -254,34 +242,44 @@ def build_search_queries(b: str, p: str, pe: str, y: str) -> list[str]:
         f'"{b}" "{pe}" {safe_y} pdf'
     ]
 
-def search_duckduckgo(query: str) -> list[str]:
-    """חיפוש ב-DuckDuckGo דרך HTML Scraping"""
+def search_duckduckgo_lite(query: str) -> list[str]:
+    """
+    חיפוש ב-DuckDuckGo Lite. המנוע הרגיל חוסם בוטים לאחרונה, 
+    אבל גרסת ה-Lite מיועדת לדפדפנים ישנים וקלה יותר לסריקה ללא חסימות 403.
+    """
     try:
-        r = requests.get(
-            "https://html.duckduckgo.com/html/", 
-            params={"q": query}, 
+        r = requests.post(
+            "https://lite.duckduckgo.com/lite/", 
+            data={"q": query}, 
             headers=HEADERS, 
             timeout=10
         )
-        soup = BeautifulSoup(r.text, "lxml")
-        urls =[]
-        for a in soup.select("a[href]"):
-            href = a.get("href", "")
-            if "uddg=" in href: 
-                parsed_url = urllib.parse.urlparse(href)
-                query_params = urllib.parse.parse_qs(parsed_url.query)
-                href = query_params.get("uddg", [""])[0]
-                
-            if href.lower().endswith(".pdf"): 
-                urls.append(href)
-                
-        return urls[:4]
+        urls = re.findall(r'(https?://[^\s"<>\'()]+?\.pdf)', r.text)
+        return list(dict.fromkeys(urls))[:4]
     except Exception as e:
-        log.warning("DuckDuckGo fetch failed: %s", e)
+        log.warning("DuckDuckGo Lite fetch failed: %s", e)
         return[]
 
+def search_yahoo(query: str) -> list[str]:
+    """
+    מנוע חיפוש חדש שנוסף לגרסה זו: Yahoo!
+    יהו מאוד סלחני לבקשות פייתון ומוצא קבצי PDF מצוין.
+    """
+    try:
+        r = requests.get(
+            "https://search.yahoo.com/search", 
+            params={"p": query + " filetype:pdf"}, 
+            headers=HEADERS, 
+            timeout=10
+        )
+        urls = re.findall(r'(https?://[^\s"<>\'()]+?\.pdf)', r.text)
+        return list(dict.fromkeys(urls))[:4]
+    except Exception as e:
+        log.warning("Yahoo fetch failed: %s", e)
+        return []
+
 def search_bing(query: str) -> list[str]:
-    """חיפוש ב-Bing לאיתור קבצי PDF"""
+    """חיפוש גיבוי ב-Bing"""
     try:
         r = requests.get(
             "https://www.bing.com/search", 
@@ -290,43 +288,38 @@ def search_bing(query: str) -> list[str]:
             timeout=8
         )
         urls = re.findall(r'"(https?://[^"]+\.pdf)"', r.text)
-        unique_urls = list(dict.fromkeys(urls))
-        return unique_urls[:4]
+        return list(dict.fromkeys(urls))[:4]
     except Exception as e:
         log.warning("Bing fetch failed: %s", e)
         return[]
 
-def search_direct_sites(b: str, pe: str) -> list[str]:
+def search_haredi_archives(b: str, pe: str) -> list[str]:
     """
-    חיפוש ישיר בתוך הפורטלים היהודיים הגדולים בישראל:
-    החזרנו לכאן גם את kipa.co.il כפי שהיה במקור!
+    חיפוש ממוקד בארכיוני עלונים חרדיים בלבד!
+    מחפש בתוך האתרים דרשו ובינינו. הוסר החיפוש ב'ישיבה' שאינו חרדי.
     """
     safe_parasha = urllib.parse.quote(pe)
     safe_bulletin = urllib.parse.quote(b)
     
-    sites =[
-        f"https://www.yeshiva.org.il/search?q={safe_bulletin}+{safe_parasha}&type=pdf",
-        f"https://www.toraland.org.il/search?s={safe_bulletin}+{safe_parasha}",
-        f"https://www.kipa.co.il/?s={safe_bulletin}+{safe_parasha}+pdf"
+    # חיפוש היעדים באמצעות מנוע Yahoo כדי לעקוף את מנגנוני החיפוש הפנימיים המסובכים שלהם
+    queries = [
+        f'"{safe_bulletin}" "{safe_parasha}" site:beinenu.com filetype:pdf',
+        f'"{safe_bulletin}" "{safe_parasha}" site:dirshu.co.il filetype:pdf'
     ]
     
     urls =[]
-    for site in sites:
-        try:
-            r = requests.get(site, headers=HEADERS, timeout=8)
-            urls.extend(re.findall(r'"(https?://[^"]+\.pdf)"', r.text)[:3])
-        except Exception:
-            continue
-            
-    return urls[:5]
+    for q in queries:
+        urls.extend(search_yahoo(q))
+        
+    return list(dict.fromkeys(urls))[:4]
 
 # ══════════════════════════════════════════════════════════════════
 # הורדה ואימות של ה-PDF
 # ══════════════════════════════════════════════════════════════════
 def download_pdf_bytes(url: str) -> bytes | None:
     """
-    מוריד את ה-PDF מהאינטרנט. מגן מפני קבצים ענקיים או קבצים שבורים.
-    מחזיר Bytes של הקובץ או None במקרה של כישלון.
+    מוריד את ה-PDF.
+    מגן מפני קבצים כבדים מדי באמצעות הורדה בחלקים ועצירת חירום.
     """
     try:
         head = requests.head(url, headers=HEADERS, timeout=5, allow_redirects=True)
@@ -362,12 +355,13 @@ def gemini_validate_pdf(api_key: str, pdf_bytes: bytes, b: str, p: str, y: str) 
     """
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash") # משתמשים במודל היציב לבדיקות ה-PDF
+        # שימוש במודל יציב לבדיקות ראייה ממוחשבת (Vision)
+        model = genai.GenerativeModel("gemini-1.5-flash")
         
+        # לקיחת החלק הראשון בלבד של הקובץ לחסכון
         sample_bytes = pdf_bytes[:2 * 1024 * 1024]
         b64_data = base64.b64encode(sample_bytes).decode()
 
-        # אם השנה היא "תשפו" נבקש לחפש גם תשפ"ו
         display_year = y
         if y == "תשפו": display_year = "תשפ\"ו או תשפו"
         if y == "תשפה": display_year = "תשפ\"ה או תשפה"
@@ -378,7 +372,7 @@ def gemini_validate_pdf(api_key: str, pdf_bytes: bytes, b: str, p: str, y: str) 
         1. האם העלון שייך באופן ברור לסדרה/שם: "{b}"?
         2. האם הוא עוסק בפרשת: "{p}"?
         3. האם שנת ההוצאה הכתובה בעלון תואמת לשנת: {display_year}? 
-           (אזהרה: אם ב-PDF כתובה שנה ישנה אחרת - עליך לענות NO!).
+           (אזהרה: אם ב-PDF כתובה שנה אחרת כמו תשפ"ד - עליך לענות NO!).
         
         אם אתה מסופק אפילו באחד מהסעיפים - ענה NO.
         """
@@ -398,25 +392,25 @@ def gemini_validate_pdf(api_key: str, pdf_bytes: bytes, b: str, p: str, y: str) 
 
 
 # ══════════════════════════════════════════════════════════════════
-# ליבת החיפוש וה-Fallback
+# ליבת החיפוש וה-Fallback האקטיבי
 # ══════════════════════════════════════════════════════════════════
 def search_single_target(api_key: str, b: str, p: str, pe: str, y: str):
-    """
-    הפונקציה מבצעת את מעגל החיפוש השלם עבור יעד אחד ספציפי.
-    """
+    """מבצע מעגל חיפוש שלם: שאילתות -> סריקה במנועים -> הורדה -> אימות"""
     queries = build_search_queries(b, p, pe, y)
     candidates =[]
     
     for q in queries: 
-        candidates += search_duckduckgo(q)
+        candidates += search_duckduckgo_lite(q)
+        candidates += search_yahoo(q)
         candidates += search_bing(q)
         
-    candidates += search_direct_sites(b, pe)
+    candidates += search_haredi_archives(b, pe)
     
     unique_urls = list(dict.fromkeys(candidates))
     log.info("Found %d unique URL candidates for %s %s", len(unique_urls), b, p)
 
     for url in unique_urls:
+        log.info("Attempting to download and validate: %s", url)
         pdf_data = download_pdf_bytes(url)
         if pdf_data and gemini_validate_pdf(api_key, pdf_data, b, p, y):
             safe_name = f"{b}_{pe}_{y}.pdf".replace('"', "").replace(' ', '_')
@@ -426,13 +420,13 @@ def search_single_target(api_key: str, b: str, p: str, pe: str, y: str):
 
 def find_bulletin_logic(api_key: str, raw_query: str):
     """
-    מנוע החיפוש המרכזי.
+    מנוע החיפוש המרכזי המחבר הכל.
     """
     from datetime import datetime, timezone
     today = datetime.now(timezone.utc).date()
     ctx = get_context_dates(today)
     
-    # שלב 1: הבנת כוונת המשתמש
+    # שלב 1: הבנת כוונת המשתמש עם תיקונים חרדיים
     parsed = parse_user_intent(api_key, raw_query, ctx)
     b = parsed.get("bulletin")
     p = parsed.get("parasha")
@@ -448,7 +442,7 @@ def find_bulletin_logic(api_key: str, raw_query: str):
             "success": True, 
             "pdf": pdf, 
             "filename": filename, 
-            "msg": f"מעולה! נמצא הגליון '{b}' לפרשת {p}."
+            "msg": f"מעולה! נמצא הגליון החרדי '{b}' לפרשת {p}."
         }
     
     # שלב 3: חיפוש אקטיבי של אלטרנטיבות (Fallback) במקביל!
@@ -493,48 +487,47 @@ def find_bulletin_logic(api_key: str, raw_query: str):
     }
 
 # ══════════════════════════════════════════════════════════════════
-# Vercel Handler - טיפול בבקשות מהדפדפן עם מניעת שגיאות ה-404 ו-501
+# Vercel Handler - טיפול בתקשורת מול ה-Frontend (חסין לשגיאות 404/501)
 # ══════════════════════════════════════════════════════════════════
 class handler(BaseHTTPRequestHandler):
     
     def _handle_cors(self):
-        """מאפשר גישה חלקה לדפדפן"""
+        """פותר בעיות חסימת תקשורת מצד הדפדפן (CORS)"""
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
     def do_OPTIONS(self):
-        """תגובה חלקה לבקשות מקדימות"""
+        """מענה ל-Preflight של הדפדפן"""
         self.send_response(200)
         self._handle_cors()
         self.end_headers()
         
     def do_GET(self):
         """
-        תיקון קריטי לשגיאת ה-501!
-        כעת אם משתמש ייכנס לקישור דרך הדפדפן (שמפעיל GET), 
-        הוא יקבל הודעה יפה במקום שגיאת שרת מפחידה.
+        תיקון לשגיאת ה-501: אם משתמש גולש בטעות לקישור של ה-API ישירות, 
+        הוא מקבל הודעה מסודרת במקום שגיאת שרת פנימית.
         """
         self._send_json(200, {
             "success": True, 
-            "message": "AlonBot API is running successfully. Please send a POST request to use the search engine."
+            "message": "AlonBot API is running! Please use a POST request to search."
         })
 
     def do_POST(self):
-        """הפונקציה המרכזית המקבלת את בקשת החיפוש"""
+        """נקודת הכניסה המרכזית של הבקשות מהדפדפן"""
         try:
             length = int(self.headers.get("Content-Length", 0))
             raw_body = self.rfile.read(length)
             body = json.loads(raw_body)
         except Exception:
-            # במקום להחזיר 400 שיוצר שגיאה בדפדפן, מחזירים תמיד 200 עם success=False
-            return self._send_json(200, {"success": False, "error": "פורמט בקשה לא תקין (JSON Error)."})
+            # סטטוס 200 עם הודעת שגיאה ב-JSON מונע שגיאת רשת אדומה ב-Console
+            return self._send_json(200, {"success": False, "error": "פורמט בקשה לא תקין (שגיאת JSON)."})
 
         api_key = (body.get("api_key") or "").strip()
         query = (body.get("query") or "").strip()
 
         if not api_key:
-            return self._send_json(200, {"success": False, "error": "חסר מפתח API. נא להזין בהגדרות."})
+            return self._send_json(200, {"success": False, "error": "חסר מפתח API. נא להזין בהגדרות החשבון."})
         if not query:
             return self._send_json(200, {"success": False, "error": "אנא הקלד את שם העלון שברצונך לחפש."})
 
@@ -544,9 +537,8 @@ class handler(BaseHTTPRequestHandler):
             log.exception("Critical server crash in find_bulletin_logic")
             return self._send_json(200, {"success": False, "error": f"שגיאת שרת פנימית: {e}"})
 
-        # שים לב: אנחנו מחזירים *תמיד* סטטוס 200, כדי לא ליצור שגיאת 404 (Not Found) אדומה בדפדפן!
-        # הלוגיקה של ההצלחה או הכישלון מנוהלת בתוך ה-JSON עצמו.
-        
+        # שים לב: אנחנו מחזירים *תמיד* סטטוס 200 (OK)
+        # הלוגיקה של ההצלחה/כישלון מנוהלת בפנים ולא פוגעת בחווית המשתמש
         if result.get("success"):
             self._send_json(200, {
                 "success": True,
@@ -568,7 +560,7 @@ class handler(BaseHTTPRequestHandler):
             })
 
     def _send_json(self, status_code: int, data_obj: dict):
-        """פונקציית עזר לשליחת ה-JSON חזרה לדפדפן בצורה תקנית"""
+        """אריזת הנתונים לתשובת HTTP תקנית ושליחתה ללקוח"""
         response_body = json.dumps(data_obj, ensure_ascii=False).encode("utf-8")
         self.send_response(status_code)
         self._handle_cors()
@@ -576,5 +568,3 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(response_body)))
         self.end_headers()
         self.wfile.write(response_body)
-
-# --- סוף הקובץ ---
