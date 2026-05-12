@@ -165,7 +165,7 @@ def clean_json_text(raw_text: str) -> str:
 def call_gemini_nlp(api_key: str, prompt: str) -> str:
     """
     קורא לג'מיני. מנסה קודם את המודל הקל, ואם הוא לא זמין או קורס, 
-    עובר מיד למודל ה-2.5-flash היציב כדי לא לאבד את בקשת המשתמש!
+    עובר מיד למודל ה-1.5-flash היציב כדי לא לאבד את בקשת המשתמש!
     (זה פותר את הקריסה שראית בלוגים).
     """
     genai.configure(api_key=api_key)
@@ -175,9 +175,9 @@ def call_gemini_nlp(api_key: str, prompt: str) -> str:
         resp = model.generate_content(prompt)
         return resp.text
     except Exception as e1:
-        log.warning("Primary NLP model failed (%s). Falling back to gemini-2.5-flash...", e1)
+        log.warning("Primary NLP model failed (%s). Falling back to gemini-1.5-flash...", e1)
         try:
-            fallback_model = genai.GenerativeModel("gemini-2.5-flash")
+            fallback_model = genai.GenerativeModel("gemini-1.5-flash")
             resp = fallback_model.generate_content(prompt)
             return resp.text
         except Exception as e2:
@@ -255,63 +255,46 @@ def build_search_queries(b: str, p: str, pe: str, y: str) -> list[str]:
     ]
 
 def search_duckduckgo(query: str) -> list[str]:
+    """חיפוש ב-DuckDuckGo דרך HTML Scraping"""
     try:
         r = requests.get(
-            "https://html.duckduckgo.com/html/",
-            params={"q": query},
-            headers=HEADERS,
+            "https://html.duckduckgo.com/html/", 
+            params={"q": query}, 
+            headers=HEADERS, 
             timeout=10
         )
-
-        log.info("DDG STATUS: %s", r.status_code)
-        log.info("DDG LENGTH: %d", len(r.text))
-
         soup = BeautifulSoup(r.text, "lxml")
-
-        urls = []
-
+        urls =[]
         for a in soup.select("a[href]"):
             href = a.get("href", "")
-
-            if "uddg=" in href:
-                parsed = urllib.parse.urlparse(href)
-                qs = urllib.parse.parse_qs(parsed.query)
-                href = qs.get("uddg", [""])[0]
-
-            if ".pdf" in href.lower():
+            if "uddg=" in href: 
+                parsed_url = urllib.parse.urlparse(href)
+                query_params = urllib.parse.parse_qs(parsed_url.query)
+                href = query_params.get("uddg", [""])[0]
+                
+            if href.lower().endswith(".pdf"): 
                 urls.append(href)
-
-        log.info("DDG PDF RESULTS: %d", len(urls))
-
-        return list(dict.fromkeys(urls))[:8]
-
+                
+        return urls[:4]
     except Exception as e:
-        log.warning("DDG failed: %s", e)
-        return []
+        log.warning("DuckDuckGo fetch failed: %s", e)
+        return[]
 
 def search_bing(query: str) -> list[str]:
+    """חיפוש ב-Bing לאיתור קבצי PDF"""
     try:
         r = requests.get(
-            "https://www.bing.com/search",
-            params={"q": query},
-            headers=HEADERS,
-            timeout=10
+            "https://www.bing.com/search", 
+            params={"q": query + " filetype:pdf"}, 
+            headers=HEADERS, 
+            timeout=8
         )
-
-        log.info("BING STATUS: %s", r.status_code)
-        log.info("BING LENGTH: %d", len(r.text))
-
-        urls = re.findall(r'https?://[^\s"\']+', r.text)
-
-        pdfs = [u for u in urls if ".pdf" in u.lower()]
-
-        log.info("BING PDF RESULTS: %d", len(pdfs))
-
-        return list(dict.fromkeys(pdfs))[:8]
-
+        urls = re.findall(r'"(https?://[^"]+\.pdf)"', r.text)
+        unique_urls = list(dict.fromkeys(urls))
+        return unique_urls[:4]
     except Exception as e:
-        log.warning("BING failed: %s", e)
-        return []
+        log.warning("Bing fetch failed: %s", e)
+        return[]
 
 def search_direct_sites(b: str, pe: str) -> list[str]:
     """
@@ -379,7 +362,7 @@ def gemini_validate_pdf(api_key: str, pdf_bytes: bytes, b: str, p: str, y: str) 
     """
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.5-flash") # משתמשים במודל היציב לבדיקות ה-PDF
+        model = genai.GenerativeModel("gemini-1.5-flash") # משתמשים במודל היציב לבדיקות ה-PDF
         
         sample_bytes = pdf_bytes[:2 * 1024 * 1024]
         b64_data = base64.b64encode(sample_bytes).decode()
@@ -419,87 +402,27 @@ def gemini_validate_pdf(api_key: str, pdf_bytes: bytes, b: str, p: str, y: str) 
 # ══════════════════════════════════════════════════════════════════
 def search_single_target(api_key: str, b: str, p: str, pe: str, y: str):
     """
-    חיפוש דו-שלבי חכם:
-    1. חיפוש רגיל
-    2. אם לא נמצא - משתמש במה שכן נמצא כדי לנסח חיפוש טוב יותר
+    הפונקציה מבצעת את מעגל החיפוש השלם עבור יעד אחד ספציפי.
     """
-
-    # =========================
-    # שלב ראשון - רגיל
-    # =========================
     queries = build_search_queries(b, p, pe, y)
-    candidates = []
-
-    for q in queries:
+    candidates =[]
+    
+    for q in queries: 
         candidates += search_duckduckgo(q)
         candidates += search_bing(q)
-
+        
     candidates += search_direct_sites(b, pe)
-
+    
     unique_urls = list(dict.fromkeys(candidates))
-    log.info("First search found %d candidates for %s %s", len(unique_urls), b, p)
+    log.info("Found %d unique URL candidates for %s %s", len(unique_urls), b, p)
 
-    # ניסיון הורדה
     for url in unique_urls:
         pdf_data = download_pdf_bytes(url)
         if pdf_data and gemini_validate_pdf(api_key, pdf_data, b, p, y):
-            safe_name = f"{b}_{pe}_{y}.pdf".replace('"', "").replace(" ", "_")
+            safe_name = f"{b}_{pe}_{y}.pdf".replace('"', "").replace(' ', '_')
             return pdf_data, safe_name
-
-    # =========================
-    # שלב שני - חיפוש חכם
-    # =========================
-    log.info("Primary search failed. Starting smart retry...")
-
-    smart_queries = build_smart_retry_queries(b, p, pe, y, unique_urls)
-
-    second_candidates = []
-
-    for q in smart_queries:
-        second_candidates += search_duckduckgo(q)
-        second_candidates += search_bing(q)
-
-    second_urls = list(dict.fromkeys(second_candidates))
-    log.info("Smart retry found %d candidates", len(second_urls))
-
-    for url in second_urls:
-        pdf_data = download_pdf_bytes(url)
-        if pdf_data and gemini_validate_pdf(api_key, pdf_data, b, p, y):
-            safe_name = f"{b}_{pe}_{y}.pdf".replace('"', "").replace(" ", "_")
-            return pdf_data, safe_name
-
+            
     return None, None
-
-def build_smart_retry_queries(b: str, p: str, pe: str, y: str, found_urls: list[str]) -> list[str]:
-    """
-    אם חיפוש ראשון נכשל -
-    משתמש במה שמצא כדי לייצר חיפוש חכם יותר
-    """
-
-    words = set()
-
-    for url in found_urls:
-        parts = re.split(r'[/_\-.?=&]+', url)
-
-        for part in parts:
-            part = part.strip()
-
-            if len(part) >= 3:
-                words.add(part)
-
-    extra = " ".join(list(words)[:6])
-
-    queries = [
-        f'"{b}" pdf',
-        f'"{b}" "{p}" pdf',
-        f'"{b}" "{pe}" pdf',
-        f'{b} {p} filetype:pdf',
-        f'{b} {extra} pdf',
-        f'"{b}" עלון שבת pdf',
-        f'"{b}" פרשת {p}',
-    ]
-
-    return list(dict.fromkeys(queries))
 
 def find_bulletin_logic(api_key: str, raw_query: str):
     """
@@ -653,3 +576,5 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(response_body)))
         self.end_headers()
         self.wfile.write(response_body)
+
+# --- סוף הקובץ ---
