@@ -181,9 +181,9 @@ class NaturalLanguageProcessor:
             response = model.generate_content(prompt)
             return response.text
         except Exception as e1:
-            log.warning("NLP Flash-Lite failed (%s). Retrying with Flash 1.5...", e1)
+            log.warning("NLP Flash-Lite failed (%s). Retrying with Flash 2.5...", e1)
             try:
-                fallback_model = genai.GenerativeModel("gemini-1.5-flash")
+                fallback_model = genai.GenerativeModel("gemini-2.5-flash")
                 response = fallback_model.generate_content(prompt)
                 return response.text
             except Exception as e2:
@@ -406,7 +406,7 @@ class PdfHandler:
         try:
             genai.configure(api_key=api_key)
             # מודל ה-Flash מומלץ יותר לקריאת מסמכים (OCR) מה-Lite.
-            model = genai.GenerativeModel("gemini-1.5-flash")
+            model = genai.GenerativeModel("gemini-2.5-flash")
             
             # לוקחים רק את 1.5MB הראשונים של הקובץ (מספיק לעמוד הראשון והשני)
             sample_bytes = pdf_bytes[:int(1.5 * 1024 * 1024)]
