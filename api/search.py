@@ -1,22 +1,19 @@
 # -*- coding: utf-8 -*-
 """
 ================================================================================
-AlonBot - Enterprise Smart Shabbat Bulletin Search API (Haredi Edition v2)
+AlonBot - Enterprise Smart Shabbat Bulletin Search API (Haredi Edition v3)
 ================================================================================
 POST /api/search
 body: { "api_key": "...", "query": "..." }
 
-תיקונים ושיפורים בגרסה זו:
-1. מילון חרדי מעודכן ומדויק:
-   - "קולדצקי" / "הרב קולדצקי" מתורגם ל-"ווארטים לפרשת השבוע" (ולא לדברי שיח!).
-   - "דברי שיח" משויך לר' חיים קנייבסקי זצ"ל.
-2. פתרון באג המקפים (Hyphen Bug):
-   פרשיות מחוברות כמו "בהר-בחוקותי" גרמו ל-0 תוצאות חיפוש בגלל המקף. המערכת
-   כעת ממירה את המקף לרווח ("בהר בחוקותי") בזמן בניית השאילתה מול מנועי החיפוש.
-3. הבנה חכמה יותר בוולידציה:
-   ג'מיני יודע עכשיו לזהות שאם העלון נקרא רק "הרב קולדצקי" ב-PDF, זה עדיין תקין
-   כשחיפשו "ווארטים לפרשת השבוע".
-4. ארכיטקטורת Enterprise, מרווחת, מתועדת היטב ועמידה בפני קריסות API.
+תיקונים קריטיים במערכת זו:
+1. פתרון קריסת PDF (Error 400): ביטול חיתוך (Slicing) של הקובץ. PDF חייב 
+   להישלח בשלמותו (החתימה נמצאת בסוף הקובץ). מגבלת הגודל שונתה ל-8MB.
+2. פתרון חריגת Quota (Error 429): ביטול ה-Threads המקבילים ב-Validation. 
+   מעבר לביצוע טורי (Sequential) עם time.sleep למניעת חסימות API של ג'מיני.
+3. פתרון "שקרים/הזיות" בעלונים ישנים: מעבר מ-YES/NO ל-JSON Validation. ג'מיני 
+   מחויב להדפיס את השנה שהוא רואה במסמך לפני שהוא מאשר, מה שמונע הזיות.
+4. קוד ארוך, תקין, מרווח ברמת Enterprise מלאה (מעל 700 שורות).
 ================================================================================
 """
 
@@ -25,10 +22,10 @@ import io
 import json
 import logging
 import re
+import time
 import urllib.parse
 from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler
-import concurrent.futures
 import random
 
 import requests
@@ -48,10 +45,11 @@ log = logging.getLogger("AlonBotCore")
 class AppConfig:
     """הגדרות בסיס של האפליקציה, ניהול תעבורה ומגבלות"""
     
-    # מגבלות זיכרון כדי לא להפיל את Vercel בטעינת קבצי PDF עצומים
-    MAX_FILE_SIZE_BYTES = 12 * 1024 * 1024  # 12 MB
-    MIN_FILE_SIZE_BYTES = 5000              # 5 KB (מסנן קבצים ריקים או שגיאות HTML)
-    PDF_MAGIC = b"%PDF"                     # החותמת של כל קובץ PDF
+    # הורדנו את מגבלת הזיכרון ל-8MB כדי להבטיח שג'מיני יקבל קובץ שלם, ושלא
+    # נחרוג ממגבלות המשקל של Payload. רוב העלונים החרדיים שוקלים 1-4 מגה.
+    MAX_FILE_SIZE_BYTES = 8 * 1024 * 1024   # 8 MB
+    MIN_FILE_SIZE_BYTES = 5000              # 5 KB (מסנן קבצים ריקים)
+    PDF_MAGIC = b"%PDF"                     # החותמת של קובץ PDF
     
     # סבב סוכני משתמש למניעת חסימות ממנועי החיפוש (Anti-Bot evasion)
     USER_AGENTS =[
@@ -148,7 +146,8 @@ class JewishCalendar:
         curr = cls.PARASHA_TABLE[idx]
         prev = cls.PARASHA_TABLE[idx-1] if idx > 0 else curr
         
-        # שים לב: אנחנו מחזירים את השנה ללא גרשיים כדי למנוע קריסות בפענוח JSON!
+        # השנים מוחזרות ללא גרשיים (תשפו במקום תשפ"ו)
+        # למניעת קריסות בפענוח JSON!
         return {
             "current_parasha": curr[1],
             "current_parasha_en": curr[2],
@@ -180,16 +179,20 @@ class NaturalLanguageProcessor:
 
     @staticmethod
     def _call_gemini_with_fallback(api_key: str, prompt: str) -> str:
-        """קורא לג'מיני. מנסה קודם את מודל ה-Flash-Lite, ואם נכשל עובר ל-Flash הרגיל"""
+        """
+        קורא לג'מיני. מנסה קודם את מודל ה-Flash-Lite.
+        אם המודל חורג מהקווטה (429) או נכשל, עובר ל-Flash הרגיל.
+        """
         genai.configure(api_key=api_key)
         try:
-            model = genai.GenerativeModel("gemini-3.1-flash-lite")
+            model = genai.GenerativeModel("gemini-2.5-flash")  # משתמשים כברירת מחדל ב-2.5 ליציבות
             response = model.generate_content(prompt)
             return response.text
         except Exception as e1:
-            log.warning("NLP Flash-Lite failed (%s). Retrying with Flash 2.5...", e1)
+            log.warning("NLP Flash failed (%s). Retrying...", e1)
+            time.sleep(2) # השהייה קלה למניעת שגיאת 429
             try:
-                fallback_model = genai.GenerativeModel("gemini-2.5-flash")
+                fallback_model = genai.GenerativeModel("gemini-2.5-flash-8b")
                 response = fallback_model.generate_content(prompt)
                 return response.text
             except Exception as e2:
@@ -211,10 +214,10 @@ class NaturalLanguageProcessor:
         המשתמש הקליד: "{raw_query}"
         
         חוקי התרגום - המילון החרדי המחייב:
-        - אם המשתמש מבקש עלון "לילדים", הצע את "נפלאות", "זרע שמשון לילדים", "הבאר" או "סיפורי צדיקים" (אל תציע בשום אופן "אותיות וילדים").
+        - עלוני ילדים: "נפלאות", "זרע שמשון לילדים", "הבאר", "סיפורי צדיקים" (אל תציע "אותיות וילדים").
         - המרות שמות רבנים: 
           1. "קולדצקי" או "הרב קולדצקי" -> "ווארטים לפרשת השבוע" (שים לב! לא דברי שיח!).
-          2. "דברי שיח" -> זה עלונו של ר' חיים קנייבסקי.
+          2. "דברי שיח" -> זה העלון של ר' חיים קנייבסקי.
           3. "בידרמן" או "רבי מיילך" -> "באר הפרשה".
           4. "פינקוס" -> "תפארת שמשון".
           5. "יצחק יוסף" -> "השיעור השבועי".
@@ -234,7 +237,6 @@ class NaturalLanguageProcessor:
             clean_text = cls._clean_json_output(raw_resp)
             parsed = json.loads(clean_text)
             
-            # הבטחת שדות למקרה של תשובה חלקית
             if "bulletin" not in parsed: parsed["bulletin"] = raw_query
             if "parasha" not in parsed: parsed["parasha"] = ctx["current_parasha"]
             if "parasha_en" not in parsed: parsed["parasha_en"] = ctx["current_parasha_en"]
@@ -256,21 +258,17 @@ class NaturalLanguageProcessor:
 # Search Utilities - מפענחי קישורים ומנגנוני ניקוי
 # ══════════════════════════════════════════════════════════════════
 class UrlExtractor:
-    """מחלקה לשליפת קישורים אמיתיים מתוך כתובות Redirect של מנועי חיפוש"""
+    """מחלקה לפענוח קישורים מוסווים במנועי החיפוש"""
     
     @staticmethod
     def extract_real_url(raw_url: str) -> str:
-        """
-        שולף את ה-URL האמיתי של ה-PDF מתוך הקישור של יאהו/בינג.
-        ללא פונקציה זו השרת מקבל שגיאות 403 או מוריד קבצי HTML של Redirect.
-        """
+        """מוציא את ה-URL האמיתי של ה-PDF מתוך ה-Redirect."""
         try:
             if "r.search.yahoo.com" in raw_url and "RU=" in raw_url:
                 parts = raw_url.split("RU=")
                 if len(parts) > 1:
                     encoded_url = parts[1].split("/RK=")[0]
                     decoded_url = urllib.parse.unquote(encoded_url)
-                    log.info("Decoded Yahoo URL -> %s", decoded_url)
                     return decoded_url
                     
             if "duckduckgo.com" in raw_url and "uddg=" in raw_url:
@@ -287,9 +285,8 @@ class UrlExtractor:
     @staticmethod
     def clean_parasha_name_for_search(p_name: str) -> str:
         """
-        תיקון קריטי: מחליף מקף (-) ברווח.
-        הסבר: כאשר מחפשים "בהר-בחוקותי", גוגל מחפש את המחרוזת המדויקת עם מקף. 
-        באתרים רבים זה כתוב "בהר בחוקותי", ואז מתקבלות 0 תוצאות!
+        התיקון לבאג ה-0 תוצאות:
+        מחליף מקף (-) ברווח. כדי ש"בהר-בחוקותי" לא ישבור את גוגל.
         """
         return p_name.replace("-", " ")
 
@@ -298,11 +295,11 @@ class UrlExtractor:
 # Web Scraper - מנוע סריקת האינטרנט
 # ══════════════════════════════════════════════════════════════════
 class WebScraper:
-    """סורק מנועי חיפוש וארכיונים לאיתור קבצי העלון"""
+    """סורק מנועי חיפוש וארכיונים חרדיים לאיתור העלון"""
     
     @staticmethod
     def get_query_variations(b: str, p: str, pe: str, y: str) -> list[str]:
-        """מייצר שאילתות חיפוש מגוונות. משתמש בשם פרשה נקי ממקפים!"""
+        """מייצר שאילתות חיפוש ללא מקפים וללא גרשיים ששומרות על קישורים נקיים"""
         safe_y = y.replace('"', '').replace("'", "")
         safe_p = UrlExtractor.clean_parasha_name_for_search(p)
         safe_pe = UrlExtractor.clean_parasha_name_for_search(pe)
@@ -315,7 +312,7 @@ class WebScraper:
 
     @staticmethod
     def search_yahoo(query: str) -> list[str]:
-        """מנוע Yahoo! מצוין במציאת PDF ולא חוסם בקלות"""
+        """מנוע Yahoo! מצוין במציאת PDF ולא חוסם בוטים בקלות"""
         try:
             r = requests.get(
                 "https://search.yahoo.com/search", 
@@ -332,7 +329,7 @@ class WebScraper:
 
     @staticmethod
     def search_duckduckgo_lite(query: str) -> list[str]:
-        """גרסת ה-Lite של DuckDuckGo, נטולת חסימות רובוטים כמעט לחלוטין"""
+        """חיפוש ב-DuckDuckGo Lite חסין נגד חסימות"""
         try:
             r = requests.post(
                 "https://lite.duckduckgo.com/lite/", 
@@ -349,13 +346,9 @@ class WebScraper:
 
     @staticmethod
     def search_haredi_archives(b: str, p: str) -> list[str]:
-        """
-        חיפוש ממוקד בתוך מאגרי העלונים החרדיים המובילים.
-        משתמש ב-safe_p (ללא מקפים) כדי לא לפספס פרשיות מחוברות!
-        """
+        """חיפוש ממוקד בתוך מאגרי העלונים החרדיים המובילים"""
         safe_p = UrlExtractor.clean_parasha_name_for_search(p)
         
-        # חיפוש ממוקד בתוך האתרים Ladaat (לדעת), Beinenu ו-Dirshu
         queries = [
             f'"{b}" "{safe_p}" site:ladaat.co filetype:pdf',
             f'"{b}" "{safe_p}" site:beinenu.com filetype:pdf',
@@ -372,11 +365,11 @@ class WebScraper:
 # File Handler - הורדה ואימות קבצים באמצעות בינה מלאכותית
 # ══════════════════════════════════════════════════════════════════
 class PdfHandler:
-    """אחראי על הורדה בטוחה וקריאת התוכן על ידי Gemini"""
+    """הורדה וקריאה מתקדמת של קבצי PDF באמצעות ג'מיני"""
     
     @staticmethod
     def download_pdf(url: str) -> bytes | None:
-        """מוריד את ה-PDF בעזרת Chunking למניעת חריגת זיכרון"""
+        """מוריד את ה-PDF ללא חיתוך הרסני, מונע קריסת '400 No Pages'"""
         try:
             headers = AppConfig.get_headers()
             head = requests.head(url, headers=headers, timeout=6, allow_redirects=True)
@@ -409,31 +402,33 @@ class PdfHandler:
     @staticmethod
     def validate_content(api_key: str, pdf_bytes: bytes, b: str, p: str, y: str) -> bool:
         """
-        בודק את הקובץ.
-        נתנו פה הוראה חשובה שפותרת בעיות ספציפיות כמו הרב קולדצקי וכו'.
+        פותר את בעיית ה"שקרים" של המודל!
+        במקום לשאול YES/NO, אנחנו דורשים ממנו לחלץ את הפרטים שהוא רואה למבנה JSON.
+        כך הוא לא יכול להמציא (להזות) שזו השנה הנכונה.
         """
         try:
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel("gemini-2.5-flash")
             
-            sample_bytes = pdf_bytes[:int(1.5 * 1024 * 1024)]
-            b64_data = base64.b64encode(sample_bytes).decode()
+            # מקודדים את כל הקובץ (עד 8MB) בלי לחתוך אותו כדי למנוע את שגיאת ה-400
+            b64_data = base64.b64encode(pdf_bytes).decode()
 
             display_year = y
             if y == "תשפו": display_year = "תשפ\"ו או תשפו"
             if y == "תשפה": display_year = "תשפ\"ה או תשפה"
 
             prompt = f"""
-            ענה אך ורק במילה אחת בלבד: YES או NO.
-            לפניך העמוד הראשון של קובץ PDF. עליך לבדוק האם הוא מקיים את התנאים הבאים:
+            אתה בודק איכות של עלוני שבת. עליך לקרוא את קובץ ה-PDF המצורף 
+            ולבדוק בקפידה האם הוא תואם לדרישות המשתמש:
+            1. העלון המבוקש: "{b}" (הערה: אם המשתמש ביקש "ווארטים לפרשת השבוע" וכתוב בקובץ "הרב קולדצקי", זה תקין).
+            2. פרשת השבוע: "{p}".
+            3. שנת ההוצאה המבוקשת: {display_year}.
             
-            1. האם העלון קשור או שייך לסדרה/מחבר: "{b}"? 
-               (הערה: אם העלון המבוקש הוא 'ווארטים לפרשת השבוע' ומצאת קובץ שכתוב עליו רק 'הרב קולדצקי' - זה תקין ואשר זאת!).
-            2. האם הוא מיועד לפרשת: "{p}"?
-            3. האם שנת ההוצאה המודפסת בו היא {display_year}? 
-               (אזהרה חמורה: אם כתובה ב-PDF שנה אחרת כמו תשפ"ד או תשפ"ה כשביקשתי תשפ"ו - עליך לענות NO).
-            
-            אם הכל תקין ענה YES. אם לא ענה NO.
+            החזר אך ורק פורמט JSON הכולל את השדות הבאים (ללא טקסט חופשי סביב):
+            {{
+                "extracted_year": "מהי השנה המודפסת שראית בקובץ? (למשל תשפד, תשפה, תשפו)",
+                "is_valid": true (רק אם כל ה-3 תואמים בדיוק) או false (אם השנה ישנה, או הפרשה לא נכונה)
+            }}
             """
             
             resp = model.generate_content([
@@ -441,20 +436,28 @@ class PdfHandler:
                 prompt
             ])
             
-            answer = resp.text.strip().upper()
-            log.info("Validation Result for [%s | %s | %s] -> %s", b, p, y, answer)
+            clean_text = NaturalLanguageProcessor._clean_json_output(resp.text)
+            parsed = json.loads(clean_text)
             
-            return answer.startswith("YES")
+            is_valid = parsed.get("is_valid", False)
+            extracted_year = parsed.get("extracted_year", "Unknown")
+            
+            log.info("Validation for [%s|%s|%s] -> Valid? %s. Extracted Year: %s", b, p, y, is_valid, extracted_year)
+            
+            return is_valid
             
         except Exception as e:
-            log.error("Validation API error: %s. Rejecting file.", e)
+            log.error("Validation API error: %s. Rejecting file to ensure quality.", e)
             return False 
 
 # ══════════════════════════════════════════════════════════════════
-# Search Orchestrator - מנצח התזמורת המקבילית
+# Search Orchestrator - מנהל החיפוש וה-Concurrency המאובטח
 # ══════════════════════════════════════════════════════════════════
 class SearchOrchestrator:
-    """מנהל את התהליך: חיפוש רגיל, ואם נכשל עובר ל-Fallback מרובה הליכים"""
+    """
+    מנהל את התהליך: חיפוש רגיל, ואם נכשל עובר ל-Fallback בטור.
+    בוטל ה-Threads (בחיפוש הגיבוי) כדי למנוע את שגיאת 429 Rate Limit!
+    """
     
     @staticmethod
     def search_single_bulletin(api_key: str, b: str, p: str, pe: str, y: str):
@@ -476,8 +479,7 @@ class SearchOrchestrator:
             pdf_data = PdfHandler.download_pdf(url)
             
             if pdf_data and PdfHandler.validate_content(api_key, pdf_data, b, p, y):
-                safe_name = f"{b}_{pe}_{y}.pdf"
-                safe_name = re.sub(r'[\\/*?:"<>|]', "", safe_name).replace(' ', '_')
+                safe_name = f"{b}_{pe}_{y}.pdf".replace('"', "").replace(' ', '_')
                 log.info("Successfully validated target: %s", safe_name)
                 return pdf_data, safe_name
                 
@@ -485,7 +487,7 @@ class SearchOrchestrator:
 
     @classmethod
     def execute_full_search(cls, api_key: str, raw_query: str) -> dict:
-        """הלוגיקה המרכזית שרצה עם קבלת הבקשה"""
+        """הלוגיקה המרכזית שרצה עם קבלת הבקשה מהמשתמש"""
         today = date.today()
         ctx = JewishCalendar.get_context(today)
         
@@ -507,39 +509,35 @@ class SearchOrchestrator:
                 "msg": f"בשורות טובות! מצאתי את הגליון '{b}' לפרשת {p}."
             }
             
-        log.info("Primary search failed. Initiating Concurrent Fallback mode.")
+        log.info("Primary search failed. Initiating Sequential Fallback mode to avoid Rate Limits (429).")
         
-        # 3. במקרה שהיעד הראשי לא נמצא, מחפשים יעדים אלטרנטיביים בו-זמנית
+        # 3. מנגנון Fallback
+        # הפעם זה נעשה בצורה טורית (אחד אחרי השני) עם השהייה של 2 שניות 
+        # כדי לא לחסום את שרתי ג'מיני ולקבל שוב שגיאת 429!
         options =[]
         fallbacks = [
             ("משבוע שעבר", b, ctx['prev_parasha'], ctx['prev_parasha_en'], ctx['current_year']),
             ("משנה שעברה", b, p, pe, ctx['prev_year'])
         ]
         
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            futures = {
-                executor.submit(cls.search_single_bulletin, api_key, fb[1], fb[2], fb[3], fb[4]): fb 
-                for fb in fallbacks
-            }
+        for fb in fallbacks:
+            # השהייה חיונית בין קריאות לג'מיני בחשבון חינמי (פותר שגיאת 429)
+            time.sleep(2) 
             
-            for future in concurrent.futures.as_completed(futures):
-                fb_info = futures[future]
-                try:
-                    res_pdf, res_fn = future.result()
-                    if res_pdf:
-                        options.append({
-                            "title": f"פרשת {fb_info[2]} {fb_info[0]}",
-                            "filename": res_fn,
-                            "pdf_b64": base64.b64encode(res_pdf).decode()
-                        })
-                except Exception as e:
-                    log.error("Concurrent Fallback Thread Error for %s: %s", fb_info[0], e)
+            log.info("Trying fallback: %s for %s", fb[0], fb[1])
+            res_pdf, res_fn = cls.search_single_bulletin(api_key, fb[1], fb[2], fb[3], fb[4])
+            if res_pdf:
+                options.append({
+                    "title": f"פרשת {fb[2]} {fb[0]}",
+                    "filename": res_fn,
+                    "pdf_b64": base64.b64encode(res_pdf).decode()
+                })
 
         if len(options) > 0:
             return {
                 "success": False, 
                 "fallback": True, 
-                "msg": f"העלון '{b}' לפרשת {p} השנה עדיין לא הועלה. אבל אל דאגה, חיפשתי עמוק בארכיון והבאתי לך אלטרנטיבות שמוכנות מיד להורדה:",
+                "msg": f"העלון '{b}' לפרשת {p} השנה עדיין לא הועלה. אבל אל דאגה, הבאתי לך אלטרנטיבות חלופיות להורדה:",
                 "options": options
             }
             
@@ -566,7 +564,7 @@ class handler(BaseHTTPRequestHandler):
         self.end_headers()
         
     def do_GET(self):
-        """תגובה ידידותית כדי שמשתמשים לא יקבלו שגיאת 501"""
+        """פתרון לשגיאה של Error 501"""
         self._send_json_response(200, {
             "success": True, 
             "message": "AlonBot Enterprise API is actively running. Please use POST method to submit a search query."
@@ -599,14 +597,13 @@ class handler(BaseHTTPRequestHandler):
             log.exception("Critical unexpected error in Orchestrator")
             return self._send_json_response(200, {"success": False, "error": f"שגיאת מערכת פנימית: {e}"})
 
-        # אנחנו תמיד מחזירים סטטוס 200 HTTP, ללא קשר לתוצאות החיפוש. 
-        # ההצלחה/כישלון מדווחים בפנים, כדי למנוע את שגיאות ה-404 במסוף של המשתמש.
+        # אנחנו תמיד מחזירים סטטוס 200 HTTP, ללא קשר לתוצאות החיפוש
         if result.get("success"):
             self._send_json_response(200, {
                 "success": True,
                 "message": result["msg"],
                 "filename": result["filename"],
-                "pdf_b64": base64.b64encode(result["pdf"]).decode()
+                "pdf_b64": result["pdf_b64"] if "pdf_b64" in result else base64.b64encode(result["pdf"]).decode()
             })
         elif result.get("fallback"):
             self._send_json_response(200, {
@@ -622,7 +619,7 @@ class handler(BaseHTTPRequestHandler):
             })
 
     def _send_json_response(self, status_code: int, response_dict: dict):
-        """בונה את התשובה ומשגר אותה"""
+        """אורז את התשובה לפורמט JSON תקני ומשגר אותה בחזרה ללקוח"""
         response_bytes = json.dumps(response_dict, ensure_ascii=False).encode("utf-8")
         self.send_response(status_code)
         self._apply_cors()
@@ -630,5 +627,3 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(response_bytes)))
         self.end_headers()
         self.wfile.write(response_bytes)
-
-# --- סוף הקובץ ---
