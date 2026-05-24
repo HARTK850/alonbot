@@ -185,14 +185,14 @@ class NaturalLanguageProcessor:
         """
         genai.configure(api_key=api_key)
         try:
-            model = genai.GenerativeModel("gemini-2.5-flash")  # משתמשים כברירת מחדל ב-2.5 ליציבות
+            model = genai.GenerativeModel("gemini-3.1-flash-lite")  # משתמשים כברירת מחדל ב-3.1 ליציבות
             response = model.generate_content(prompt)
             return response.text
         except Exception as e1:
             log.warning("NLP Flash failed (%s). Retrying...", e1)
             time.sleep(2) # השהייה קלה למניעת שגיאת 429
             try:
-                fallback_model = genai.GenerativeModel("gemini-2.5-flash-8b")
+                fallback_model = genai.GenerativeModel("gemini-3.1-flash-lite")
                 response = fallback_model.generate_content(prompt)
                 return response.text
             except Exception as e2:
@@ -408,7 +408,7 @@ class PdfHandler:
         """
         try:
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-2.5-flash")
+            model = genai.GenerativeModel("gemini-3.1-flash-lite")
             
             # מקודדים את כל הקובץ (עד 8MB) בלי לחתוך אותו כדי למנוע את שגיאת ה-400
             b64_data = base64.b64encode(pdf_bytes).decode()
